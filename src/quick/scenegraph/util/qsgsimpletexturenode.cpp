@@ -224,8 +224,10 @@ void QSGSimpleTextureNode::setTexture(QSGTexture *texture)
 {
     Q_ASSERT(texture);
     Q_D(QSGSimpleTextureNode);
+    QSGTexture *tex = m_material.texture();
+    if (tex == texture) return;
     if (d->ownsTexture)
-        delete m_material.texture();
+        delete tex;
     m_material.setTexture(texture);
     m_opaque_material.setTexture(texture);
     qsgsimpletexturenode_update(&m_geometry, texture, m_rect, d->sourceRect, d->texCoordMode);
