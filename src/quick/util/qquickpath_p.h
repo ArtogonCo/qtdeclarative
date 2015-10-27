@@ -34,6 +34,7 @@
 #ifndef QQUICKPATH_H
 #define QQUICKPATH_H
 
+#include <QtQuick/qtquickglobal.h>
 #include <qqml.h>
 
 #include <private/qqmlnullablevalue_p.h>
@@ -52,7 +53,7 @@ struct QQuickPathData
     QList<QQuickCurve*> curves;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathElement : public QObject
+class Q_QUICK_EXPORT QQuickPathElement : public QObject
 {
     Q_OBJECT
 public:
@@ -61,7 +62,7 @@ Q_SIGNALS:
     void changed();
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathAttribute : public QQuickPathElement
+class Q_QUICK_EXPORT QQuickPathAttribute : public QQuickPathElement
 {
     Q_OBJECT
 
@@ -86,7 +87,7 @@ private:
     qreal _value;
 };
 
-class Q_AUTOTEST_EXPORT QQuickCurve : public QQuickPathElement
+class Q_QUICK_EXPORT QQuickCurve : public QQuickPathElement
 {
     Q_OBJECT
 
@@ -128,7 +129,7 @@ private:
     QQmlNullableValue<qreal> _relativeY;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathLine : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathLine : public QQuickCurve
 {
     Q_OBJECT
 public:
@@ -137,7 +138,7 @@ public:
     void addToPath(QPainterPath &path, const QQuickPathData &);
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathQuad : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathQuad : public QQuickCurve
 {
     Q_OBJECT
 
@@ -177,7 +178,7 @@ private:
     QQmlNullableValue<qreal> _relativeControlY;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathCubic : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathCubic : public QQuickCurve
 {
     Q_OBJECT
 
@@ -243,7 +244,7 @@ private:
     QQmlNullableValue<qreal> _relativeControl2Y;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathCatmullRomCurve : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathCatmullRomCurve : public QQuickCurve
 {
     Q_OBJECT
 public:
@@ -252,7 +253,7 @@ public:
     void addToPath(QPainterPath &path, const QQuickPathData &);
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathArc : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathArc : public QQuickCurve
 {
     Q_OBJECT
     Q_PROPERTY(qreal radiusX READ radiusX WRITE setRadiusX NOTIFY radiusXChanged)
@@ -294,7 +295,7 @@ private:
     ArcDirection _direction;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathSvg : public QQuickCurve
+class Q_QUICK_EXPORT QQuickPathSvg : public QQuickCurve
 {
     Q_OBJECT
     Q_PROPERTY(QString path READ path WRITE setPath NOTIFY pathChanged)
@@ -313,7 +314,7 @@ private:
     QString _path;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPathPercent : public QQuickPathElement
+class Q_QUICK_EXPORT QQuickPathPercent : public QQuickPathElement
 {
     Q_OBJECT
     Q_PROPERTY(qreal value READ value WRITE setValue NOTIFY valueChanged)
@@ -342,7 +343,7 @@ struct QQuickCachedBezier
 };
 
 class QQuickPathPrivate;
-class Q_AUTOTEST_EXPORT QQuickPath : public QObject, public QQmlParserStatus
+class Q_QUICK_EXPORT QQuickPath : public QObject, public QQmlParserStatus
 {
     Q_OBJECT
 
