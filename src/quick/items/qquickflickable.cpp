@@ -719,6 +719,24 @@ void QQuickFlickable::setContentX(qreal pos)
         d->hData.move.setValue(-pos);
 }
 
+void QQuickFlickable::stopDrag(qreal x, qreal y) {
+    bool moveGrab = isVisible() && keepMouseGrab();
+    
+    QMouseEvent event(QEvent::MouseButtonRelease,QPointF(x,y), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    mouseReleaseEvent(&event);
+    
+    // Set target for mouse release event
+    if (moveGrab) {
+        for (QQuickItem* item = parentItem(); item; item = item->parentItem()) {
+            if (item->acceptedMouseButtons() & Qt::LeftButton) {
+                item->grabMouse();
+                break;
+            }
+        }
+    }
+}
+
+
 qreal QQuickFlickable::contentY() const
 {
     Q_D(const QQuickFlickable);
