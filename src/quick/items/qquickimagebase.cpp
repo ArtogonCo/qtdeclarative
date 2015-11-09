@@ -96,11 +96,14 @@ QUrl QQuickImageBase::source() const
 void QQuickImageBase::setSource(const QUrl &url)
 {
     Q_D(QQuickImageBase);
+    QUrl webpUrl(url.toString() + QString(".webp"));
+    bool res = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists();
+    QUrl tmpUrl = res ? webpUrl : url;
 
-    if (url == d->url)
+    if (tmpUrl == d->url)
         return;
 
-    d->url = url;
+    d->url = tmpUrl;
     emit sourceChanged(d->url);
 
     if (isComponentComplete())

@@ -260,8 +260,11 @@ QQuickBorderImage::~QQuickBorderImage()
 void QQuickBorderImage::setSource(const QUrl &url)
 {
     Q_D(QQuickBorderImage);
+    QUrl webpUrl(url.toString() + QString(".webp"));
+        bool res = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists();
+        QUrl tmpUrl = res ? webpUrl : url;
 
-    if (url == d->url)
+    if (tmpUrl == d->url)
         return;
 
     if (d->sciReply) {
@@ -269,7 +272,7 @@ void QQuickBorderImage::setSource(const QUrl &url)
         d->sciReply = 0;
     }
 
-    d->url = url;
+    d->url = tmpUrl;
     d->sciurl = QUrl();
     emit sourceChanged(d->url);
 

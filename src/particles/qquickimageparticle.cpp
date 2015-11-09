@@ -764,9 +764,14 @@ void QQuickImageParticle::setImage(const QUrl &image)
 
     if (!m_image)
         m_image.reset(new ImageData);
-    if (image == m_image->source)
+    
+    QUrl webpUrl(image.toString()+ QString(".webp"));
+    QUrl tmpUrl = QFile(webpUrl.toString().replace(QRegExp("^qrc"),"")).exists() ? webpUrl : image;
+
+    
+    if (tmpUrl == m_image->source)
         return;
-    m_image->source = image;
+    m_image->source = tmpUrl;
     emit imageChanged();
     reset();
 }
