@@ -220,13 +220,9 @@ public Q_SLOTS:
 
     void setSource(QUrl arg)
     {
-        QUrl webpUrl(arg.toString() + QString(".webp"));
-            bool res = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists();
-            QUrl tmpUrl = res ? webpUrl : arg;
-
-        if (m_sprite->m_source != tmpUrl) {
-            m_sprite->setSource(tmpUrl);
-            Q_EMIT sourceChanged(tmpUrl);
+        if (m_sprite->m_source != arg) {
+            m_sprite->setSource(arg);
+            Q_EMIT sourceChanged(arg);
             reloadImage();
         }
     }
