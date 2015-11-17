@@ -735,6 +735,7 @@ QSGNode *QQuickCanvasItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData
     QQuickCanvasNode *node = static_cast<QQuickCanvasNode*>(oldNode);
     if (!node) {
         node = new QQuickCanvasNode();
+        node->setOwnsTexture(false);
         d->node = node;
     }
 
