@@ -54,6 +54,7 @@
 #include <private/qv4script_p.h>
 #include <private/qv4scopedvalue_p.h>
 
+#include <QTime>
 #include <QStack>
 #include <QStringList>
 #include <QThreadStorage>
@@ -1203,6 +1204,8 @@ void QQmlComponent::createObject(QQmlV4Function *args)
     Q_ASSERT(d->engine);
     Q_ASSERT(args);
 
+    QTime duration; duration.start();
+
     QObject *parent = 0;
     QV4::ExecutionEngine *v4 = args->v4engine();
     QV4::Scope scope(v4);
@@ -1260,6 +1263,9 @@ void QQmlComponent::createObject(QQmlV4Function *args)
         args->setReturnValue(QV4::Encode::null());
     else
         args->setReturnValue(object->asReturnedValue());
+
+    const QString componentId = d->engine->contextForObject(this)->nameForObject(this);
+    qDebug() << "Component.createObject()" << componentId << duration.elapsed() << "ms";
 }
 
 /*!
