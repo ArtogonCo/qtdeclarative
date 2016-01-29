@@ -1059,8 +1059,18 @@ void QQuickPixmapData::removeFromCache()
     }
 }
 
+#include <QTime>
+#include <QThread>
+class Duration {
+public:
+    Duration() {duration.start();}
+    ~Duration() {qDebug() << "Image sync creating " << duration.elapsed() << "ms";}
+    QTime duration;
+};
+
 static QQuickPixmapData* createPixmapDataSync(QQuickPixmap *declarativePixmap, QQmlEngine *engine, const QUrl &url, const QSize &requestSize, AutoTransform autoTransform, bool *ok)
 {
+    Duration d;
     if (url.scheme() == QLatin1String("image")) {
         QSize readSize;
 
@@ -1108,6 +1118,8 @@ static QQuickPixmapData* createPixmapDataSync(QQuickPixmap *declarativePixmap, Q
     QUrl webpUrl(url.toString() + QString(".webp"));
     bool res = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists();
     QUrl urlTmp = res ? webpUrl : url;
+    
+    qWarning() << "Image sync loading:" << url;
 
     QString localFile = QQmlFile::urlToLocalFileOrQrc(urlTmp);
     if (localFile.isEmpty())
