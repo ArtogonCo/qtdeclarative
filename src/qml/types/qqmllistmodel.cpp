@@ -215,7 +215,7 @@ const ListLayout::Role *ListLayout::getRoleOrCreate(const QString &key, const QV
     }
 
     if (type == Role::Invalid) {
-        qmlInfo(0) << "Can't create role for unsupported data type";
+        qmlInfo(0) << "Can't create role for unsupported data type for key:" << key <<" " << (int)data.type();
         return 0;
     }
 

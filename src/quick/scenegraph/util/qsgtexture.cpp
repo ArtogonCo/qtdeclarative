@@ -615,6 +615,13 @@ void QSGPlainTexture::setTextureId(int id)
     m_mipmaps_generated = false;
 }
 
+static unsigned short convert8to4(unsigned int v) {
+    return ((v&0x000000ff) >> 4)  << 12|
+           ((v&0x0000ff00) >> 12) << 8 |
+           ((v&0x00ff0000) >> 20) << 4 |
+           ((v&0xff000000) >> 28);
+}
+
 void QSGPlainTexture::bind()
 {
     QOpenGLContext *context = QOpenGLContext::currentContext();
@@ -748,7 +755,20 @@ void QSGPlainTexture::bind()
         swizzleTime = qsg_renderer_timer.nsecsElapsed();
     Q_QUICK_SG_PROFILE_RECORD(QQuickProfiler::SceneGraphTexturePrepare);
 
-    funcs->glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, m_texture_size.width(), m_texture_size.height(), 0, externalFormat, GL_UNSIGNED_BYTE, tmp.constBits());
+    static bool texFlag = qEnvironmentVariableIsSet("QSG_TEXTURE_RGBA4444");
+    if (texFlag) {
+        qsg_swizzleBGRAToRGBA(&tmp);
+        int c = m_texture_size.width()* m_texture_size.height();
+        unsigned short * p = new unsigned short[c];
+        const uint * bp = (const uint *)tmp.constBits();
+        for(int i = 0; i < c; ++i) {
+            p[i] = convert8to4(bp[i]);
+        }
+        funcs->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_texture_size.width(), m_texture_size.height(), 0, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, (void*)p);
+        delete[] p;
+    } else {
+        funcs->glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, m_texture_size.width(), m_texture_size.height(), 0, externalFormat, texFlag ? GL_UNSIGNED_SHORT_4_4_4_4 : GL_UNSIGNED_BYTE, tmp.constBits());
+    }
 
     qint64 uploadTime = 0;
     if (profileFrames)

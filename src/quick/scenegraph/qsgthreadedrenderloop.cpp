@@ -661,6 +661,11 @@ void QSGRenderThread::processEventsAndWaitForMore()
     qCDebug(QSG_LOG_RENDERLOOP) << QSG_RT_PAD << "--- done processEventsAndWaitForMore()";
 }
 
+#if defined(__APPLE__)
+#include <QDebug>
+extern "C" bool isBackground();
+#endif
+
 void QSGRenderThread::run()
 {
     qCDebug(QSG_LOG_RENDERLOOP) << QSG_RT_PAD << "run()";
@@ -672,9 +677,17 @@ void QSGRenderThread::run()
     while (active) {
 
         if (window) {
-            if (!sgrc->openglContext() && windowSize.width() > 0 && windowSize.height() > 0 && gl->makeCurrent(window))
+#if defined(__APPLE__)
+            if (!isBackground()) {
+#endif
+                if (!sgrc->openglContext() && windowSize.width() > 0 && windowSize.height() > 0 && gl->makeCurrent(window))
                 sgrc->initialize(gl);
-            syncAndRender();
+                syncAndRender();
+#if defined(__APPLE__)
+            } else {
+                //qWarning() << "QSGRenderThread::run background block";
+            }
+#endif
         }
 
         processEvents();

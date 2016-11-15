@@ -263,8 +263,19 @@ void Atlas::upload(Texture *texture)
                                                                    m_externalFormat, GL_UNSIGNED_BYTE, tmp.constBits());
 }
 
+#if defined(__APPLE__)
+#include <QDebug>
+    extern "C" bool isBackground();
+#endif
+    
 void Atlas::uploadBgra(Texture *texture)
 {
+#if defined(__APPLE__)
+    if (isBackground()) {
+        qWarning() << "BACKGROUND RENDER Atlas::uploadBgra";
+        return;
+    }
+#endif
     QOpenGLFunctions *funcs = QOpenGLContext::currentContext()->functions();
     const QRect &r = texture->atlasSubRect();
     QImage image = texture->image();

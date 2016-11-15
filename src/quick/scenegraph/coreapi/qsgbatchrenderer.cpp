@@ -2297,8 +2297,19 @@ void Renderer::renderMergedBatch(const Batch *batch)
     }
 }
 
+#if defined(__APPLE__)
+#include <QDebug>
+extern "C" bool isBackground();
+#endif
+
 void Renderer::renderUnmergedBatch(const Batch *batch)
 {
+#if defined(__APPLE__)
+    if (isBackground()) {
+        qWarning() << "BACKGROUND RENDER Renderer::renderUnmergedBatch";
+        return;
+    }
+#endif
     if (batch->vertexCount == 0)
         return;
 
