@@ -60,6 +60,7 @@
 #include <private/qdebugmessageservice_p.h>
 #include <private/qqmlenginecontrolservice_p.h>
 #include "qqmlincubator.h"
+#include <private/qqmlincubator_p.h>
 #include "qqmlabstracturlinterceptor.h"
 #include <private/qqmlboundsignal_p.h>
 
@@ -598,8 +599,19 @@ QQmlEnginePrivate::~QQmlEnginePrivate()
     typedef QHash<QPair<QQmlType *, int>, QQmlPropertyCache *>::Iterator TypePropertyCacheIt;
     typedef QHash<int, QQmlCompiledData *>::Iterator CompositeTypesIt;
 
-    if (inProgressCreations)
+    if (inProgressCreations) {
         qWarning() << QQmlEngine::tr("There are still \"%1\" items in the process of being created at engine destruction.").arg(inProgressCreations);
+        qWarning() << "Incubating:";
+        for (QIntrusiveList<Incubator, &Incubator::next>::iterator i = incubatorList.begin(),
+                                                                   e = incubatorList.end(); i != e; ++i) {
+             QQmlIncubatorPrivate* ip = static_cast<QQmlIncubatorPrivate*>(*i);
+             QQmlContextData* pcd = ip->creator->parentContextData();
+             if (pcd) {
+                qWarning() << "  incubator private context data - url:" << pcd->urlString();
+             }
+        }
+        qWarning() << "----------------------------------------------------------------------------";
+    }
 
     while (cleanup) {
         QQmlCleanup *c = cleanup;
