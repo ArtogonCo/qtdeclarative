@@ -689,11 +689,9 @@ static QUrl prepareImageUrl(const QUrl &url)
 }
 
 
-void QQuickPixmapReader::processJob(QQuickPixmapReply *runningJob, const QUrl &urlTmp, const QString &localFile,
+void QQuickPixmapReader::processJob(QQuickPixmapReply *runningJob, const QUrl &url, const QString &localFile,
                                     AutoTransform autoTransform, QQuickImageProvider::ImageType imageType, QQuickImageProvider *provider)
 {
-    QUrl url = prepareImageUrl(urlTmp);	
-	
     // fetch
     if (url.scheme() == QLatin1String("image")) {
         // Use QQuickImageProvider
@@ -1230,10 +1228,8 @@ static QQuickPixmapData* createPixmapDataSync(QQuickPixmap *declarativePixmap, Q
         return new QQuickPixmapData(declarativePixmap, url, requestSize, autoTransform,
             QQuickPixmap::tr("Failed to get image from provider: %1").arg(url.toString()));
     }
-
-    QUrl urlTmp = prepareImageUrl(url);	;
  
-    QString localFile = QQmlFile::urlToLocalFileOrQrc(urlTmp);
+    QString localFile = QQmlFile::urlToLocalFileOrQrc(url);
     if (localFile.isEmpty())
         return 0;
 
@@ -1439,8 +1435,10 @@ void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &reques
     load(engine, url, requestSize, options, UsePluginDefault);
 }
 
-void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &requestSize, QQuickPixmap::Options options, AutoTransform requestAutoTransform)
+void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url0, const QSize &requestSize, QQuickPixmap::Options options, AutoTransform requestAutoTransform)
 {
+	QUrl url = prepareImageUrl(url0);
+	
     if (d) {
         d->declarativePixmaps.remove(this);
         d->release();
