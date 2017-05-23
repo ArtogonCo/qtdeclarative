@@ -670,11 +670,18 @@ void QQuickPixmapReader::processJobs()
     }
 }
 
+
+static QUrl prepareImageUrl(const QUrl &urlTmp)
+ {
+     QUrl webpUrl(urlTmp.toString() + QLatin1String(".webp"));
+     bool exists = QFile(webpUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists();
+     return exists ? webpUrl : urlTmp;
+ }
+
 void QQuickPixmapReader::processJob(QQuickPixmapReply *runningJob, const QUrl &urlTmp, const QString &localFile,
                                     AutoTransform autoTransform, QQuickImageProvider::ImageType imageType, QQuickImageProvider *provider)
 {
-    QUrl webpUrl(urlTmp.toString() + QString(".webp"));
-    QUrl url = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists() ? webpUrl : urlTmp;	
+    QUrl url = prepareImageUrl(urlTmp);	
 	
     // fetch
     if (url.scheme() == QLatin1String("image")) {
@@ -1213,8 +1220,7 @@ static QQuickPixmapData* createPixmapDataSync(QQuickPixmap *declarativePixmap, Q
             QQuickPixmap::tr("Failed to get image from provider: %1").arg(url.toString()));
     }
 
-    QUrl webpUrl(url.toString() + QString(".webp"));
-    QUrl urlTmp = QFile(webpUrl.toString().replace(QRegExp("^qrc:"),":")).exists() ? webpUrl : url;
+    QUrl urlTmp = prepareImageUrl(url);	;
  
     QString localFile = QQmlFile::urlToLocalFileOrQrc(urlTmp);
     if (localFile.isEmpty())
