@@ -671,12 +671,23 @@ void QQuickPixmapReader::processJobs()
 }
 
 
-static QUrl prepareImageUrl(const QUrl &urlTmp)
- {
-     QUrl webpUrl(urlTmp.toString() + QLatin1String(".webp"));
-     bool exists = QFile(webpUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists();
-     return exists ? webpUrl : urlTmp;
- }
+static QUrl prepareImageUrl(const QUrl &url)
+{
+    const QUrl webpUrl(url.toString() + QLatin1String(".webp"));
+    if (QFile(webpUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists()) {
+        return webpUrl;
+    }
+ 
+    QUrl pvrtcUrl(url.toString() + QLatin1String(".pvrtc"));
+    if (QFile(pvrtcUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists()) {
+        pvrtcUrl.setScheme(QLatin1String("image"));
+        pvrtcUrl.setHost(QLatin1String("compressed"));
+        return pvrtcUrl;
+    }
+ 
+    return url;
+}
+
 
 void QQuickPixmapReader::processJob(QQuickPixmapReply *runningJob, const QUrl &urlTmp, const QString &localFile,
                                     AutoTransform autoTransform, QQuickImageProvider::ImageType imageType, QQuickImageProvider *provider)
