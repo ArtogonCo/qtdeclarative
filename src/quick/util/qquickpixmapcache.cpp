@@ -654,6 +654,25 @@ void QQuickPixmapReader::processJobs()
     }
 }
 
+
+static QUrl prepareImageUrl(const QUrl &url)
+{
+    const QUrl webpUrl(url.toString() + QLatin1String(".webp"));
+    if (QFile(webpUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists()) {
+        return webpUrl;
+    }
+ 
+    QUrl pvrtcUrl(url.toString() + QLatin1String(".pvrtc"));
+    if (QFile(pvrtcUrl.toString().replace(QRegExp(QLatin1String("^qrc:")), QLatin1String(":"))).exists()) {
+        pvrtcUrl.setScheme(QLatin1String("image"));
+        pvrtcUrl.setHost(QLatin1String("compressed"));
+        return pvrtcUrl;
+    }
+ 
+    return url;
+}
+
+
 void QQuickPixmapReader::processJob(QQuickPixmapReply *runningJob, const QUrl &url, const QString &localFile,
                                     QQuickImageProvider::ImageType imageType, QQuickImageProvider *provider)
 {
@@ -1223,7 +1242,7 @@ static QQuickPixmapData* createPixmapDataSync(QQuickPixmap *declarativePixmap, Q
         return new QQuickPixmapData(declarativePixmap, url, requestSize, providerOptions,
             QQuickPixmap::tr("Failed to get image from provider: %1").arg(url.toString()));
     }
-
+ 
     QString localFile = QQmlFile::urlToLocalFileOrQrc(url);
     if (localFile.isEmpty())
         return 0;
@@ -1432,6 +1451,8 @@ void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &reques
 
 void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &requestSize, QQuickPixmap::Options options, const QQuickImageProviderOptions &providerOptions)
 {
+	QUrl url = prepareImageUrl(url0);
+	
     if (d) {
         d->declarativePixmaps.remove(this);
         d->release();

@@ -641,7 +641,7 @@ QPointF QQuickPath::forwardsPointAt(const QPainterPath &path, const qreal &pathL
 
             qreal spc = prevOrigPercent + elementPercent * point.scale;
 
-            while (spc > epc) {
+            while (spc - epc > 0.001) {
                 Q_ASSERT(!(currElement > lastElement));
                 Q_UNUSED(lastElement);
                 currBez = nextBezier(path, &currElement, &bezLength);

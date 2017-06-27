@@ -210,6 +210,7 @@ public:
     Q_INVOKABLE void returnToBounds();
     Q_INVOKABLE void flick(qreal xVelocity, qreal yVelocity);
     Q_INVOKABLE void cancelFlick();
+    Q_INVOKABLE void stopDrag(qreal x, qreal y);
 
 Q_SIGNALS:
     void contentWidthChanged();
