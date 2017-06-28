@@ -1449,7 +1449,7 @@ void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &reques
     load(engine, url, requestSize, options, QQuickImageProviderOptions());
 }
 
-void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url, const QSize &requestSize, QQuickPixmap::Options options, const QQuickImageProviderOptions &providerOptions)
+void QQuickPixmap::load(QQmlEngine *engine, const QUrl &url0, const QSize &requestSize, QQuickPixmap::Options options, const QQuickImageProviderOptions &providerOptions)
 {
 	QUrl url = prepareImageUrl(url0);
 	
