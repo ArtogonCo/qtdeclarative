@@ -76,9 +76,11 @@ struct QmlTypeWrapper : Object {
     TypeNameMode mode;
     QQmlQPointer<QObject> object;
 
-    QQmlType *type;
+    QQmlType type() const;
+
+    QQmlTypePrivate *typePrivate;
     QQmlTypeNameCache *typeNamespace;
-    const void *importNamespace;
+    const QQmlImportRef *importNamespace;
 };
 
 }
@@ -93,9 +95,9 @@ struct Q_QML_EXPORT QmlTypeWrapper : Object
 
     QVariant toVariant() const;
 
-    static ReturnedValue create(ExecutionEngine *, QObject *, QQmlType *,
+    static ReturnedValue create(ExecutionEngine *, QObject *, const QQmlType &,
                                 Heap::QmlTypeWrapper::TypeNameMode = Heap::QmlTypeWrapper::IncludeEnums);
-    static ReturnedValue create(ExecutionEngine *, QObject *, QQmlTypeNameCache *, const void *,
+    static ReturnedValue create(ExecutionEngine *, QObject *, QQmlTypeNameCache *, const QQmlImportRef *,
                                 Heap::QmlTypeWrapper::TypeNameMode = Heap::QmlTypeWrapper::IncludeEnums);
 
 

@@ -1425,7 +1425,7 @@ QV4::CompiledData::Unit *QmlUnitGenerator::generate(Document &output, const QV4:
     }
 
     // write objects
-    quint32 *objectTable = reinterpret_cast<quint32*>(data + qmlUnit->offsetToObjects);
+    QV4::CompiledData::LEUInt32 *objectTable = reinterpret_cast<QV4::CompiledData::LEUInt32*>(data + qmlUnit->offsetToObjects);
     char *objectPtr = data + qmlUnit->offsetToObjects + objectOffsetTableSize;
     for (int i = 0; i < output.objects.count(); ++i) {
         const Object *o = output.objects.at(i);
@@ -1467,7 +1467,7 @@ QV4::CompiledData::Unit *QmlUnitGenerator::generate(Document &output, const QV4:
         objectToWrite->offsetToNamedObjectsInComponent = nextOffset;
         nextOffset += objectToWrite->nNamedObjectsInComponent * sizeof(quint32);
 
-        quint32 *functionsTable = reinterpret_cast<quint32*>(objectPtr + objectToWrite->offsetToFunctions);
+        QV4::CompiledData::LEUInt32 *functionsTable = reinterpret_cast<QV4::CompiledData::LEUInt32*>(objectPtr + objectToWrite->offsetToFunctions);
         for (const Function *f = o->firstFunction(); f; f = f->next)
             *functionsTable++ = o->runtimeFunctionIndices.at(f->index);
 
@@ -1493,7 +1493,7 @@ QV4::CompiledData::Unit *QmlUnitGenerator::generate(Document &output, const QV4:
         bindingPtr = writeBindings(bindingPtr, o, &QV4::CompiledData::Binding::isValueBindingToAlias);
         Q_ASSERT((bindingPtr - objectToWrite->offsetToBindings - objectPtr) / sizeof(QV4::CompiledData::Binding) == unsigned(o->bindingCount()));
 
-        quint32 *signalOffsetTable = reinterpret_cast<quint32*>(objectPtr + objectToWrite->offsetToSignals);
+        QV4::CompiledData::LEUInt32 *signalOffsetTable = reinterpret_cast<QV4::CompiledData::LEUInt32*>(objectPtr + objectToWrite->offsetToSignals);
         quint32 signalTableSize = 0;
         char *signalPtr = objectPtr + nextOffset;
         for (const Signal *s = o->firstSignal(); s; s = s->next) {
@@ -1513,7 +1513,7 @@ QV4::CompiledData::Unit *QmlUnitGenerator::generate(Document &output, const QV4:
             signalPtr += size;
         }
 
-        quint32 *namedObjectInComponentPtr = reinterpret_cast<quint32*>(objectPtr + objectToWrite->offsetToNamedObjectsInComponent);
+        QV4::CompiledData::LEUInt32 *namedObjectInComponentPtr = reinterpret_cast<QV4::CompiledData::LEUInt32*>(objectPtr + objectToWrite->offsetToNamedObjectsInComponent);
         for (int i = 0; i < o->namedObjectsInComponent.count; ++i) {
             *namedObjectInComponentPtr++ = o->namedObjectsInComponent.at(i);
         }
@@ -1694,19 +1694,19 @@ static QV4::IR::DiscoveredType resolveQmlType(QQmlEnginePrivate *qmlEngine,
 {
     QV4::IR::Type result = QV4::IR::VarType;
 
-    QQmlType *type = static_cast<QQmlType*>(resolver->data);
+    QQmlType type = resolver->qmlType;
 
     if (member->name->constData()->isUpper()) {
         bool ok = false;
-        int value = type->enumValue(qmlEngine, *member->name, &ok);
+        int value = type.enumValue(qmlEngine, *member->name, &ok);
         if (ok) {
             member->setEnumValue(value);
             return QV4::IR::SInt32Type;
         }
     }
 
-    if (type->isCompositeSingleton()) {
-        QQmlRefPointer<QQmlTypeData> tdata = qmlEngine->typeLoader.getType(type->singletonInstanceInfo()->url);
+    if (type.isCompositeSingleton()) {
+        QQmlRefPointer<QQmlTypeData> tdata = qmlEngine->typeLoader.getType(type.singletonInstanceInfo()->url);
         Q_ASSERT(tdata);
         tdata->release(); // Decrease the reference count added from QQmlTypeLoader::getType()
         // When a singleton tries to reference itself, it may not be complete yet.
@@ -1717,8 +1717,8 @@ static QV4::IR::DiscoveredType resolveQmlType(QQmlEnginePrivate *qmlEngine,
             newResolver->flags |= AllPropertiesAreFinal;
             return newResolver->resolveMember(qmlEngine, newResolver, member);
         }
-    }  else if (type->isSingleton()) {
-        const QMetaObject *singletonMeta = type->singletonInstanceInfo()->instanceMetaObject;
+    }  else if (type.isSingleton()) {
+        const QMetaObject *singletonMeta = type.singletonInstanceInfo()->instanceMetaObject;
         if (singletonMeta) { // QJSValue-based singletons cannot be accelerated
             auto newResolver = resolver->owner->New<QV4::IR::MemberExpressionResolver>();
             newResolver->owner = resolver->owner;
@@ -1743,13 +1743,13 @@ static QV4::IR::DiscoveredType resolveQmlType(QQmlEnginePrivate *qmlEngine,
     return result;
 }
 
-static void initQmlTypeResolver(QV4::IR::MemberExpressionResolver *resolver, QQmlType *qmlType)
+static void initQmlTypeResolver(QV4::IR::MemberExpressionResolver *resolver, const QQmlType &qmlType)
 {
     Q_ASSERT(resolver);
 
     resolver->resolveMember = &resolveQmlType;
-    resolver->data = qmlType;
-    resolver->extraData = 0;
+    resolver->qmlType = qmlType;
+    resolver->typenameCache = 0;
     resolver->flags = 0;
 }
 
@@ -1758,8 +1758,8 @@ static QV4::IR::DiscoveredType resolveImportNamespace(
         QV4::IR::Member *member)
 {
     QV4::IR::Type result = QV4::IR::VarType;
-    QQmlTypeNameCache *typeNamespace = static_cast<QQmlTypeNameCache*>(resolver->extraData);
-    void *importNamespace = resolver->data;
+    QQmlTypeNameCache *typeNamespace = resolver->typenameCache;
+    const QQmlImportRef *importNamespace = resolver->import;
 
     QQmlTypeNameCache::Result r = typeNamespace->query(*member->name, importNamespace);
     if (r.isValid()) {
@@ -1767,11 +1767,11 @@ static QV4::IR::DiscoveredType resolveImportNamespace(
         if (r.scriptIndex != -1) {
             // TODO: remember the index and replace with subscript later.
             result = QV4::IR::VarType;
-        } else if (r.type) {
+        } else if (r.type.isValid()) {
             // TODO: Propagate singleton information, so that it is loaded
             // through the singleton getter in the run-time. Until then we
             // can't accelerate access :(
-            if (!r.type->isSingleton()) {
+            if (!r.type.isSingleton()) {
                 auto newResolver = resolver->owner->New<QV4::IR::MemberExpressionResolver>();
                 newResolver->owner = resolver->owner;
                 initQmlTypeResolver(newResolver, r.type);
@@ -1786,11 +1786,11 @@ static QV4::IR::DiscoveredType resolveImportNamespace(
 }
 
 static void initImportNamespaceResolver(QV4::IR::MemberExpressionResolver *resolver,
-                                        QQmlTypeNameCache *imports, const void *importNamespace)
+                                        QQmlTypeNameCache *imports, const QQmlImportRef *importNamespace)
 {
     resolver->resolveMember = &resolveImportNamespace;
-    resolver->data = const_cast<void*>(importNamespace);
-    resolver->extraData = imports;
+    resolver->import = importNamespace;
+    resolver->typenameCache = imports;
     resolver->flags = 0;
 }
 
@@ -1799,7 +1799,7 @@ static QV4::IR::DiscoveredType resolveMetaObjectProperty(
         QV4::IR::Member *member)
 {
     QV4::IR::Type result = QV4::IR::VarType;
-    QQmlPropertyCache *metaObject = static_cast<QQmlPropertyCache*>(resolver->data);
+    QQmlPropertyCache *metaObject = resolver->propertyCache;
 
     if (member->name->constData()->isUpper() && (resolver->flags & LookupsIncludeEnums)) {
         const QMetaObject *mo = metaObject->createMetaObject();
@@ -1881,7 +1881,7 @@ static void initMetaObjectResolver(QV4::IR::MemberExpressionResolver *resolver, 
     Q_ASSERT(resolver);
 
     resolver->resolveMember = &resolveMetaObjectProperty;
-    resolver->data = metaObject;
+    resolver->propertyCache = metaObject;
     resolver->flags = 0;
 }
 
@@ -1950,10 +1950,10 @@ QV4::IR::Expr *JSCodeGen::fallbackNameLookup(const QString &name, int line, int 
             if (r.scriptIndex != -1) {
                 return _block->SUBSCRIPT(_block->TEMP(_importedScriptsTemp),
                                          _block->CONST(QV4::IR::SInt32Type, r.scriptIndex));
-            } else if (r.type) {
+            } else if (r.type.isValid()) {
                 QV4::IR::Name *typeName = _block->NAME(name, line, col);
                 // Make sure the run-time loads this through the more efficient singleton getter.
-                typeName->qmlSingleton = r.type->isCompositeSingleton();
+                typeName->qmlSingleton = r.type.isCompositeSingleton();
                 typeName->freeOfSideEffects = true;
                 QV4::IR::Temp *result = _block->TEMP(_block->newTemp());
                 _block->MOVE(result, typeName);
