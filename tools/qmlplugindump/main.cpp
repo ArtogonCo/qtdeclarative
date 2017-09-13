@@ -788,7 +788,7 @@ static bool readDependenciesData(QString dependenciesFile, const QByteArray &fil
                 QString version = obj.value(QStringLiteral("version")).toString();
                 if (name.isEmpty() || urisToSkip.contains(name) || version.isEmpty())
                     continue;
-                if (name.endsWith(QLatin1String("Private"), Qt::CaseInsensitive)) {
+                if (name.contains(QLatin1String("Private"), Qt::CaseInsensitive)) {
                     if (verbose)
                         std::cerr << "skipping private dependecy "
                                   << qPrintable( name ) << " "  << qPrintable(version) << std::endl;
@@ -999,7 +999,7 @@ int main(int argc, char *argv[])
     // Check which kind of application should be instantiated.
     bool useQApplication = false;
     for (int i = 0; i < argc; ++i) {
-        QString arg = QLatin1String(argv[1]);
+        QString arg = QLatin1String(argv[i]);
         if (arg == QLatin1String("--qapp") || arg == QLatin1String("-qapp"))
             useQApplication = true;
     }
