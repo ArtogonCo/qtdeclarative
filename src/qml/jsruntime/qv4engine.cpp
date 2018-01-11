@@ -478,10 +478,8 @@ ExecutionEngine::~ExecutionEngine()
     delete identifierTable;
     delete memoryManager;
 
-    QSet<QV4::CompiledData::CompilationUnit*> remainingUnits;
-    qSwap(compilationUnits, remainingUnits);
-    for (QV4::CompiledData::CompilationUnit *unit : qAsConst(remainingUnits))
-        unit->unlink();
+    while (!compilationUnits.isEmpty())
+        (*compilationUnits.begin())->unlink();
 
     internalClasses[Class_Empty]->destroy();
     delete classPool;
@@ -886,14 +884,14 @@ QUrl ExecutionEngine::resolvedUrl(const QString &file)
     while (c) {
         CallContext *callCtx = c->asCallContext();
         if (callCtx && callCtx->d()->v4Function) {
-            base.setUrl(callCtx->d()->v4Function->sourceFile());
+            base = callCtx->d()->v4Function->finalUrl();
             break;
         }
         c = parentContext(c);
     }
 
     if (base.isEmpty() && globalCode)
-        base.setUrl(globalCode->sourceFile());
+        base = globalCode->finalUrl();
 
     if (base.isEmpty())
         return src;
@@ -953,9 +951,8 @@ void ExecutionEngine::markObjects()
 
     drainMarkStack(this, markBase);
 
-    for (QSet<CompiledData::CompilationUnit*>::ConstIterator it = compilationUnits.constBegin(), end = compilationUnits.constEnd();
-         it != end; ++it) {
-        (*it)->markObjects(this);
+    for (auto compilationUnit: compilationUnits) {
+        compilationUnit->markObjects(this);
         drainMarkStack(this, markBase);
     }
 }

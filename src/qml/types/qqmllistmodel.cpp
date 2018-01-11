@@ -341,7 +341,9 @@ ListModel::ListModel(ListLayout *layout, QQmlListModel *modelCache, int uid) : m
 
 void ListModel::destroy()
 {
-    clear();
+    for (const auto &destroyer : remove(0, elements.count()))
+        destroyer();
+
     m_uid = -1;
     m_layout = 0;
     if (m_modelCache && m_modelCache->m_primary == false)
@@ -557,24 +559,20 @@ void ListModel::set(int elementIndex, QV4::Object *object)
     }
 }
 
-void ListModel::clear()
+QVector<std::function<void()>> ListModel::remove(int index, int count)
 {
-    int elementCount = elements.count();
-    for (int i=0 ; i < elementCount ; ++i) {
-        elements[i]->destroy(m_layout);
-        delete elements[i];
-    }
-    elements.clear();
-}
-
-void ListModel::remove(int index, int count)
-{
+    QVector<std::function<void()>> toDestroy;
+    auto layout = m_layout;
     for (int i=0 ; i < count ; ++i) {
-        elements[index+i]->destroy(m_layout);
-        delete elements[index+i];
+        auto element = elements[index+i];
+        toDestroy.append([element, layout](){
+            element->destroy(layout);
+            delete element;
+        });
     }
     elements.remove(index, count);
     updateCacheIndices();
+    return toDestroy;
 }
 
 void ListModel::insert(int elementIndex, QV4::Object *object)
@@ -1388,7 +1386,10 @@ void ModelObject::advanceIterator(Managed *m, ObjectIterator *it, Value *name, u
         p->value = v4->fromVariant(value);
         return;
     }
-    QV4::QObjectWrapper::advanceIterator(m, it, name, index, p, attributes);
+    // Fall back to QV4::Object as opposed to QV4::QObjectWrapper otherwise it will add
+    // unnecessary entries that relate to the roles used. These just create extra work
+    // later on as they will just be ignored.
+    QV4::Object::advanceIterator(m, it, name, index, p, attributes);
 }
 
 DEFINE_OBJECT_VTABLE(ModelObject);
@@ -2016,18 +2017,7 @@ int QQmlListModel::count() const
 */
 void QQmlListModel::clear()
 {
-    const int cleared = count();
-
-    emitItemsAboutToBeRemoved(0, cleared);
-
-    if (m_dynamicRoles) {
-        qDeleteAll(m_modelObjects);
-        m_modelObjects.clear();
-    } else {
-        m_listModel->clear();
-    }
-
-    emitItemsRemoved(0, cleared);
+    removeElements(0, count());
 }
 
 /*!
@@ -2051,20 +2041,32 @@ void QQmlListModel::remove(QQmlV4Function *args)
             return;
         }
 
-        emitItemsAboutToBeRemoved(index, removeCount);
-
-        if (m_dynamicRoles) {
-            for (int i=0 ; i < removeCount ; ++i)
-                delete m_modelObjects[index+i];
-            m_modelObjects.remove(index, removeCount);
-        } else {
-            m_listModel->remove(index, removeCount);
-        }
-
-        emitItemsRemoved(index, removeCount);
+        removeElements(index, removeCount);
     } else {
         qmlWarning(this) << tr("remove: incorrect number of arguments");
     }
+}
+
+void QQmlListModel::removeElements(int index, int removeCount)
+{
+    emitItemsAboutToBeRemoved(index, removeCount);
+
+    QVector<std::function<void()>> toDestroy;
+    if (m_dynamicRoles) {
+        for (int i=0 ; i < removeCount ; ++i) {
+            auto modelObject = m_modelObjects[index+i];
+            toDestroy.append([modelObject](){
+                delete modelObject;
+            });
+        }
+        m_modelObjects.remove(index, removeCount);
+    } else {
+        toDestroy = m_listModel->remove(index, removeCount);
+    }
+
+    emitItemsRemoved(index, removeCount);
+    for (const auto &destroyer : toDestroy)
+        destroyer();
 }
 
 /*!

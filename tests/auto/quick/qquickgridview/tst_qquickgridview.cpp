@@ -153,6 +153,8 @@ private slots:
     void multipleTransitions();
     void multipleTransitions_data();
     void multipleDisplaced();
+    void regression_QTBUG_57225();
+    void regression_QTBUG_57225_data();
 
     void inserted_leftToRight_RtL_TtB();
     void inserted_leftToRight_RtL_TtB_data();
@@ -208,6 +210,7 @@ private slots:
     void contentHeightWithDelayRemove();
 
     void QTBUG_45640();
+    void QTBUG_49218();
     void QTBUG_48870_fastModelUpdates();
 
     void keyNavigationEnabled();
@@ -5798,6 +5801,65 @@ void tst_QQuickGridView::multipleDisplaced()
     delete window;
 }
 
+void tst_QQuickGridView::regression_QTBUG_57225()
+{
+    QFETCH(int, initialCount);
+    QFETCH(int, removeIndex);
+    QFETCH(int, removeCount);
+    QFETCH(int, expectedDisplaceTransitions);
+
+    // deleting all visible items should not cause a repositioning of said items.
+
+    QaimModel model;
+    for (int i = 0; i < initialCount; i++)
+        model.addItem("Original item" + QString::number(i), "");
+
+    QQuickView *window = createView();
+    QQmlContext *ctxt = window->rootContext();
+    ctxt->setContextProperty("testModel", &model);
+    window->setSource(testFileUrl("qtbug57225.qml"));
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QQuickGridView *gridview = findItem<QQuickGridView>(window->rootObject(), "grid");
+    QVERIFY(gridview != 0);
+    QTRY_COMPARE(QQuickItemPrivate::get(gridview)->polishScheduled, false);
+
+    model.removeItems(removeIndex, removeCount);
+    QTRY_VERIFY(gridview->property("animationDone").toBool());
+
+    // verify that none of the removed items has moved to a negative position
+    QPoint minimumPosition = gridview->property("minimumPosition").toPoint();
+    QVERIFY(minimumPosition.x() >= 0);
+    QVERIFY(minimumPosition.y() >= 0);
+
+    // wait some more time to let the displaced transition happen
+    QTest::qWait(window->rootObject()->property("duration").toInt());
+    QTRY_VERIFY2(gridview->property("displaceTransitionsDone").toInt() >= expectedDisplaceTransitions,
+                 QByteArray::number(gridview->property("displaceTransitionsDone").toInt()).constData());
+
+    delete window;
+}
+
+void tst_QQuickGridView::regression_QTBUG_57225_data()
+{
+    QTest::addColumn<int>("initialCount");
+    QTest::addColumn<int>("removeIndex");
+    QTest::addColumn<int>("removeCount");
+    QTest::addColumn<int>("expectedDisplaceTransitions");
+
+    // no displace transitions should happen
+    QTest::newRow("remove all visible items") <<
+        20 << 0 << 8 << 0;
+
+    // check that the removal animation is performed
+    QTest::newRow("remove items in between") <<
+        20 << 1 << 2 << 3;
+
+    QTest::newRow("remove items in between - 2") <<
+        20 << 2 << 3 << 1;
+}
+
 void tst_QQuickGridView::cacheBuffer()
 {
     QQuickView *window = createView();
@@ -6565,6 +6627,36 @@ void tst_QQuickGridView::QTBUG_45640()
 
     QTRY_VERIFY(gridview->contentY() > qreal(-50.0) && gridview->contentY() < qreal(0.0));
 
+    delete window;
+}
+
+void tst_QQuickGridView::QTBUG_49218()
+{
+    QQuickView *window = createView();
+    window->setSource(testFileUrl("qtbug49218.qml"));
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QQuickItem *rootItem = qobject_cast<QQuickItem*>(window->rootObject());
+    QQuickGridView *gridview = qobject_cast<QQuickGridView *>(rootItem->childItems().first());
+    QVERIFY(gridview != 0);
+
+    auto processEventsAndForceLayout = [&gridview] () {
+        for (int pass = 0; pass < 2; ++pass) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            gridview->forceLayout();
+        }
+    };
+    QMetaObject::invokeMethod(rootItem, "scrollToTop");
+    processEventsAndForceLayout();
+    QMetaObject::invokeMethod(rootItem, "changeModel");
+    processEventsAndForceLayout();
+    QMetaObject::invokeMethod(rootItem, "changeModel");
+    processEventsAndForceLayout();
+    QMetaObject::invokeMethod(rootItem, "scrollToTop");
+    processEventsAndForceLayout();
+
+    QCOMPARE(gridview->indexAt(gridview->cellWidth() - 10, gridview->cellHeight() - 10), 0);
     delete window;
 }
 

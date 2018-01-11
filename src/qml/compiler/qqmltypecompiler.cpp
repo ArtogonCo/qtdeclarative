@@ -140,7 +140,10 @@ QV4::CompiledData::CompilationUnit *QQmlTypeCompiler::compile()
             sss.scan();
         }
 
-        QmlIR::JSCodeGen v4CodeGenerator(typeData->finalUrlString(), document->code, &document->jsModule, &document->jsParserEngine, document->program, typeNameCache, &document->jsGenerator.stringTable);
+        QmlIR::JSCodeGen v4CodeGenerator(typeData->urlString(), typeData->finalUrlString(),
+                                         document->code, &document->jsModule,
+                                         &document->jsParserEngine, document->program,
+                                         typeNameCache, &document->jsGenerator.stringTable);
         QQmlJSCodeGenerator jsCodeGen(this, &v4CodeGenerator);
         if (!jsCodeGen.generateCodeForComponents())
             return nullptr;
@@ -412,7 +415,7 @@ bool SignalHandlerConverter::convertSignalHandlerExpressionsToFunctionDeclaratio
                 const QString &originalPropertyName = stringAt(binding->propertyNameIndex);
 
                 auto *typeRef = resolvedTypes.value(obj->inheritedTypeNameIndex);
-                const QQmlType type = typeRef->type;
+                const QQmlType type = typeRef ? typeRef->type : QQmlType();
                 if (type.isValid()) {
                     COMPILE_EXCEPTION(binding, tr("\"%1.%2\" is not available in %3 %4.%5.").arg(typeName).arg(originalPropertyName).arg(type.module()).arg(type.majorVersion()).arg(type.minorVersion()));
                 } else {
@@ -1077,7 +1080,11 @@ QQmlComponentAndAliasResolver::AliasResolutionResult QQmlComponentAndAliasResolv
             alias->flags |= QV4::CompiledData::Alias::AliasPointsToPointerObject;
         } else {
             QQmlPropertyCache *targetCache = propertyCaches.at(targetObjectIndex);
-            Q_ASSERT(targetCache);
+            if (!targetCache) {
+                *error = QQmlCompileError(alias->referenceLocation, tr("Invalid alias target location: %1").arg(property.toString()));
+                break;
+            }
+
             QmlIR::PropertyResolver resolver(targetCache);
 
             QQmlPropertyData *targetProperty = resolver.property(property.toString());

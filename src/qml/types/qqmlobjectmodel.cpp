@@ -72,7 +72,7 @@ public:
         int ref;
     };
 
-    QQmlObjectModelPrivate() : QObjectPrivate() {}
+    QQmlObjectModelPrivate() : QObjectPrivate(), moveId(0) {}
 
     static void children_append(QQmlListProperty<QObject> *prop, QObject *item) {
         int index = static_cast<QQmlObjectModelPrivate *>(prop->data)->children.count();
@@ -129,7 +129,7 @@ public:
         }
 
         QQmlChangeSet changeSet;
-        changeSet.move(from, to, n, 0);
+        changeSet.move(from, to, n, ++moveId);
         emit q->modelUpdated(changeSet, false);
         emit q->childrenChanged();
     }
@@ -166,7 +166,7 @@ public:
         return -1;
     }
 
-
+    uint moveId;
     QList<Item> children;
 };
 
@@ -267,7 +267,7 @@ bool QQmlObjectModel::isValid() const
     return true;
 }
 
-QObject *QQmlObjectModel::object(int index, bool)
+QObject *QQmlObjectModel::object(int index, QQmlIncubator::IncubationMode)
 {
     Q_D(QQmlObjectModel);
     QQmlObjectModelPrivate::Item &item = d->children[index];
@@ -296,6 +296,11 @@ QString QQmlObjectModel::stringValue(int index, const QString &name)
     if (index < 0 || index >= d->children.count())
         return QString();
     return QQmlEngine::contextForObject(d->children.at(index).item)->contextProperty(name).toString();
+}
+
+QQmlIncubator::Status QQmlObjectModel::incubationStatus(int)
+{
+    return QQmlIncubator::Ready;
 }
 
 int QQmlObjectModel::indexOf(QObject *item, QObject *) const

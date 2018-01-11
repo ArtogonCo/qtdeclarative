@@ -304,7 +304,6 @@ public:
     static void transform_clear(QQmlListProperty<QQuickTransform> *list);
 
     void _q_resourceObjectDeleted(QObject *);
-    void _q_windowChanged(QQuickWindow *w);
     quint64 _q_createJSWrapper(QV4::ExecutionEngine *engine);
 
     enum ChangeType {
@@ -560,6 +559,8 @@ public:
     void deliverInputMethodEvent(QInputMethodEvent *);
 #endif
     void deliverShortcutOverrideEvent(QKeyEvent *);
+
+    virtual void setVisible(bool visible);
 
     bool isTransparentForPositioner() const;
     void setTransparentForPositioner(bool trans);

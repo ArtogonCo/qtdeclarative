@@ -57,6 +57,7 @@
 #include <private/qv4value_p.h>
 #include <private/qv4persistent_p.h>
 #include <qjsengine.h>
+#include <qvector.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -75,6 +76,7 @@ class QQmlNotifierEndpoint;
 namespace QV4 {
 namespace CompiledData {
 struct CompilationUnit;
+struct Binding;
 }
 }
 
@@ -215,11 +217,15 @@ public:
 
     struct DeferredData {
         unsigned int deferredIdx;
+        QMultiHash<int, const QV4::CompiledData::Binding *> bindings;
         QV4::CompiledData::CompilationUnit *compilationUnit;//Not always the same as the other compilation unit
         QQmlContextData *context;//Could be either context or outerContext
     };
     QV4::CompiledData::CompilationUnit *compilationUnit;
-    DeferredData *deferredData;
+    QVector<DeferredData *> deferredData;
+
+    void deferData(int objectIndex, QV4::CompiledData::CompilationUnit *, QQmlContextData *);
+    void releaseDeferredData();
 
     QV4::WeakValue jsWrapper;
 

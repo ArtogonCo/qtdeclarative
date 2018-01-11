@@ -75,6 +75,8 @@ class QQmlCompiledData;
 
 namespace QV4 { struct String; }
 
+void Q_QML_PRIVATE_EXPORT qmlUnregisterType(int type);
+
 class Q_QML_PRIVATE_EXPORT QQmlMetaType
 {
 public:
@@ -245,13 +247,15 @@ public:
     QQmlTypePrivate *priv() const { return d; }
     static void refHandle(QQmlTypePrivate *priv);
     static void derefHandle(QQmlTypePrivate *priv);
+    static int refCount(QQmlTypePrivate *priv);
 
     enum RegistrationType {
         CppType = 0,
         SingletonType = 1,
         InterfaceType = 2,
         CompositeType = 3,
-        CompositeSingletonType = 4
+        CompositeSingletonType = 4,
+        AnyRegistrationType = 255
     };
 
 private:

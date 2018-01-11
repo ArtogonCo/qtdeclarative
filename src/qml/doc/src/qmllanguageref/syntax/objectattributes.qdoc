@@ -1,7 +1,7 @@
 /****************************************************************************
 **
-** Copyright (C) 2015 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
+** Copyright (C) 2017 The Qt Company Ltd.
+** Contact: https://www.qt.io/licensing/
 **
 ** This file is part of the documentation of the Qt Toolkit.
 **
@@ -11,8 +11,8 @@
 ** accordance with the commercial license agreement provided with the
 ** Software or, alternatively, in accordance with the terms contained in
 ** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
+** and conditions see https://www.qt.io/terms-conditions. For further
+** information use the contact form at https://www.qt.io/contact-us.
 **
 ** GNU Free Documentation License Usage
 ** Alternatively, this file may be used under the terms of the GNU Free
@@ -20,7 +20,7 @@
 ** Foundation and appearing in the file included in the packaging of
 ** this file. Please review the following information to ensure
 ** the GNU Free Documentation License version 1.3 requirements
-** will be met: http://www.gnu.org/copyleft/fdl.html.
+** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
 ** $QT_END_LICENSE$
 **
 ****************************************************************************/
@@ -448,13 +448,38 @@ right-hand-side of the property declaration must be a valid alias reference:
 [default] property alias <name>: <alias reference>
 \endcode
 
-Unlike an ordinary property, an alias can only refer to an object, or the
-property of an object, that is within the scope of the \l{QML Object Types}
-{type} within which the alias is declared. It cannot contain arbitrary
-JavaScript expressions and it cannot refer to objects declared outside of
-the scope of its type. Also note the \e {alias reference} is not optional,
-unlike the optional default value for an ordinary property; the alias reference
-must be provided when the alias is first declared.
+Unlike an ordinary property, an alias has the following restrictions:
+
+\list
+\li It can only refer to an object, or the
+    property of an object, that is within the scope of the \l{QML Object Types}
+    {type} within which the alias is declared.
+\li It cannot contain arbitrary
+    JavaScript expressions
+\li It cannot refer to objects declared outside of
+    the scope of its type.
+\li The \e {alias reference} is not optional,
+    unlike the optional default value for an ordinary property; the alias reference
+    must be provided when the alias is first declared.
+\li It cannot refer to grouped properties; the following code will not work:
+    \code
+    property alias color: rectangle.border.color
+
+    Rectangle {
+        id: rectangle
+    }
+    \endcode
+
+    However, aliases to \l {QML Basic Types}{value type} properties do work:
+    \code
+    property alias rectX: object.rectProperty.x
+
+    Item {
+        id: object
+        property rect rectProperty
+    }
+    \endcode
+\endlist
 
 For example, below is a \c Button type with a \c buttonText aliased property
 which is connected to the \c text object of the \l Text child:

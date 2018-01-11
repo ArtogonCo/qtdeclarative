@@ -212,7 +212,7 @@ QV4::Function *CompilationUnit::linkToEngine(ExecutionEngine *engine)
 void CompilationUnit::unlink()
 {
     if (engine)
-        engine->compilationUnits.erase(engine->compilationUnits.find(this));
+        nextCompilationUnit.remove();
 
     if (isRegisteredWithEngine) {
         Q_ASSERT(data && propertyCaches.count() > 0 && propertyCaches.at(/*root object*/0));
@@ -502,6 +502,7 @@ Unit *CompilationUnit::createUnitData(QmlIR::Document *irDocument)
     if (jsUnit->sourceFileIndex == quint32(0) || jsUnit->stringAt(jsUnit->sourceFileIndex) != irDocument->jsModule.fileName) {
         ensureWritableUnit();
         jsUnit->sourceFileIndex = stringTable.registerString(irDocument->jsModule.fileName);
+        jsUnit->finalUrlIndex = stringTable.registerString(irDocument->jsModule.finalUrl);
     }
 
     // Collect signals that have had a change in signature (from onClicked to onClicked(mouse) for example)
@@ -746,7 +747,7 @@ static QByteArray ownLibraryChecksum()
     // the cache files may end up being re-used. To avoid that we also add the checksum of
     // the QtQml library.
     Dl_info libInfo;
-    if (dladdr(reinterpret_cast<const void *>(&ownLibraryChecksum), &libInfo) != 0) {
+    if (dladdr(reinterpret_cast<void *>(&ownLibraryChecksum), &libInfo) != 0) {
         QFile library(QFile::decodeName(libInfo.dli_fname));
         if (library.open(QIODevice::ReadOnly)) {
             QCryptographicHash hash(QCryptographicHash::Md5);

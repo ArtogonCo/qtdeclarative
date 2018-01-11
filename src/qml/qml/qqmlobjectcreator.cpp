@@ -233,10 +233,11 @@ QObject *QQmlObjectCreator::create(int subComponentIndex, QObject *parent, QQmlI
     return instance;
 }
 
-bool QQmlObjectCreator::populateDeferredProperties(QObject *instance)
+// ### unify or keep in sync with populateDeferredBinding()
+bool QQmlObjectCreator::populateDeferredProperties(QObject *instance, QQmlData::DeferredData *deferredData)
 {
     QQmlData *declarativeData = QQmlData::get(instance);
-    context = declarativeData->deferredData->context;
+    context = deferredData->context;
     sharedState->rootContext = context;
 
     QObject *bindingTarget = instance;
@@ -260,7 +261,7 @@ bool QQmlObjectCreator::populateDeferredProperties(QObject *instance)
     qSwap(_propertyCache, cache);
     qSwap(_qobject, instance);
 
-    int objectIndex = declarativeData->deferredData->deferredIdx;
+    int objectIndex = deferredData->deferredIdx;
     qSwap(_compiledObjectIndex, objectIndex);
 
     const QV4::CompiledData::Object *obj = qmlUnit->objectAt(_compiledObjectIndex);
@@ -271,6 +272,80 @@ bool QQmlObjectCreator::populateDeferredProperties(QObject *instance)
     qSwap(_vmeMetaObject, vmeMetaObject);
 
     setupBindings(/*applyDeferredBindings=*/true);
+
+    qSwap(_vmeMetaObject, vmeMetaObject);
+    qSwap(_bindingTarget, bindingTarget);
+    qSwap(_ddata, declarativeData);
+    qSwap(_compiledObject, obj);
+    qSwap(_compiledObjectIndex, objectIndex);
+    qSwap(_qobject, instance);
+    qSwap(_propertyCache, cache);
+
+    qSwap(_qmlContext, qmlContext);
+    qSwap(_scopeObject, scopeObject);
+
+    deferredData->bindings.clear();
+    phase = ObjectsCreated;
+
+    return errors.isEmpty();
+}
+
+// ### unify or keep in sync with populateDeferredProperties()
+bool QQmlObjectCreator::populateDeferredBinding(const QQmlProperty &qmlProperty, QQmlData::DeferredData *deferredData, const QV4::CompiledData::Binding *binding)
+{
+    Q_ASSERT(binding->flags & QV4::CompiledData::Binding::IsDeferredBinding);
+
+    QObject *instance = qmlProperty.object();
+    QQmlData *declarativeData = QQmlData::get(instance);
+    context = deferredData->context;
+    sharedState->rootContext = context;
+
+    QObject *bindingTarget = instance;
+
+    QQmlRefPointer<QQmlPropertyCache> cache = declarativeData->propertyCache;
+    QQmlVMEMetaObject *vmeMetaObject = QQmlVMEMetaObject::get(instance);
+
+    QObject *scopeObject = instance;
+    qSwap(_scopeObject, scopeObject);
+
+    QV4::Scope valueScope(v4);
+
+    Q_ASSERT(topLevelCreator);
+    if (!sharedState->allJavaScriptObjects)
+        sharedState->allJavaScriptObjects = valueScope.alloc(compilationUnit->totalObjectCount);
+
+    QV4::QmlContext *qmlContext = static_cast<QV4::QmlContext *>(valueScope.alloc(1));
+
+    qSwap(_qmlContext, qmlContext);
+
+    qSwap(_propertyCache, cache);
+    qSwap(_qobject, instance);
+
+    int objectIndex = deferredData->deferredIdx;
+    qSwap(_compiledObjectIndex, objectIndex);
+
+    const QV4::CompiledData::Object *obj = qmlUnit->objectAt(_compiledObjectIndex);
+    qSwap(_compiledObject, obj);
+
+    qSwap(_ddata, declarativeData);
+    qSwap(_bindingTarget, bindingTarget);
+    qSwap(_vmeMetaObject, vmeMetaObject);
+
+    QQmlListProperty<void> savedList;
+    qSwap(_currentList, savedList);
+
+    const QQmlPropertyData &property = QQmlPropertyPrivate::get(qmlProperty)->core;
+
+    if (property.isQList()) {
+        void *argv[1] = { (void*)&_currentList };
+        QMetaObject::metacall(_qobject, QMetaObject::ReadProperty, property.coreIndex(), argv);
+    } else if (_currentList.object) {
+        _currentList = QQmlListProperty<void>();
+    }
+
+    setPropertyBinding(&property, binding);
+
+    qSwap(_currentList, savedList);
 
     qSwap(_vmeMetaObject, vmeMetaObject);
     qSwap(_bindingTarget, bindingTarget);
@@ -370,7 +445,7 @@ void QQmlObjectCreator::setPropertyValue(const QQmlPropertyData *property, const
         QString string = binding->valueAsString(qmlUnit);
         // Encoded dir-separators defeat QUrl processing - decode them first
         string.replace(QLatin1String("%2f"), QLatin1String("/"), Qt::CaseInsensitive);
-        QUrl value = string.isEmpty() ? QUrl() : compilationUnit->url().resolved(QUrl(string));
+        QUrl value = string.isEmpty() ? QUrl() : compilationUnit->finalUrl().resolved(QUrl(string));
         // Apply URL interceptor
         if (engine->urlInterceptor())
             value = engine->urlInterceptor()->intercept(value, QQmlAbstractUrlInterceptor::UrlString);
@@ -568,7 +643,8 @@ void QQmlObjectCreator::setPropertyValue(const QQmlPropertyData *property, const
         } else if (property->propType() == qMetaTypeId<QList<QUrl> >()) {
             Q_ASSERT(binding->type == QV4::CompiledData::Binding::Type_String);
             QString urlString = binding->valueAsString(qmlUnit);
-            QUrl u = urlString.isEmpty() ? QUrl() : compilationUnit->url().resolved(QUrl(urlString));
+            QUrl u = urlString.isEmpty() ? QUrl()
+                                         : compilationUnit->finalUrl().resolved(QUrl(urlString));
             QList<QUrl> value;
             value.append(u);
             property->writeProperty(_qobject, &value, propertyWriteFlags);
@@ -1341,14 +1417,8 @@ bool QQmlObjectCreator::populateInstance(int index, QObject *instance, QObject *
     qSwap(_propertyCache, cache);
     qSwap(_vmeMetaObject, vmeMetaObject);
 
-    if (_compiledObject->flags & QV4::CompiledData::Object::HasDeferredBindings) {
-        QQmlData::DeferredData *deferData = new QQmlData::DeferredData;
-        deferData->deferredIdx = _compiledObjectIndex;
-        deferData->compilationUnit = compilationUnit;
-        deferData->compilationUnit->addref();
-        deferData->context = context;
-        _ddata->deferredData = deferData;
-    }
+    if (_compiledObject->flags & QV4::CompiledData::Object::HasDeferredBindings)
+        _ddata->deferData(_compiledObjectIndex, compilationUnit, context);
 
     if (_compiledObject->nFunctions > 0)
         setupFunctions();

@@ -201,6 +201,7 @@ QQuickWidgetPrivate::QQuickWidgetPrivate()
     , fakeHidden(false)
     , requestedSamples(0)
     , useSoftwareRenderer(false)
+    , forceFullUpdate(false)
 {
 }
 
@@ -306,6 +307,10 @@ void QQuickWidgetPrivate::render(bool needsSync)
         auto softwareRenderer = static_cast<QSGSoftwareRenderer*>(cd->renderer);
         if (softwareRenderer && !softwareImage.isNull()) {
             softwareRenderer->setCurrentPaintDevice(&softwareImage);
+            if (forceFullUpdate) {
+                softwareRenderer->markDirty();
+                forceFullUpdate = false;
+            }
             renderControl->render();
 
             updateRegion += softwareRenderer->flushRegion();
@@ -916,6 +921,7 @@ void QQuickWidget::createFramebufferObject()
         const QSize imageSize = size() * devicePixelRatioF();
         d->softwareImage = QImage(imageSize, QImage::Format_ARGB32_Premultiplied);
         d->softwareImage.setDevicePixelRatio(devicePixelRatioF());
+        d->forceFullUpdate = true;
         return;
     }
 
@@ -1244,7 +1250,8 @@ void QQuickWidget::mouseMoveEvent(QMouseEvent *e)
     // event's localPos and windowPos, and screenPos into the event's screenPos. This way
     // the windowPos in e is ignored and is replaced by localPos. This is necessary
     // because QQuickWindow thinks of itself as a top-level window always.
-    QMouseEvent mappedEvent(e->type(), e->localPos(), e->screenPos(), e->button(), e->buttons(), e->modifiers());
+    QMouseEvent mappedEvent(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                            e->button(), e->buttons(), e->modifiers(), e->source());
     QCoreApplication::sendEvent(d->offscreenWindow, &mappedEvent);
     e->setAccepted(mappedEvent.isAccepted());
 }
@@ -1258,12 +1265,12 @@ void QQuickWidget::mouseDoubleClickEvent(QMouseEvent *e)
 
     // As the second mouse press is suppressed in widget windows we emulate it here for QML.
     // See QTBUG-25831
-    QMouseEvent pressEvent(QEvent::MouseButtonPress, e->localPos(), e->screenPos(), e->button(),
-                           e->buttons(), e->modifiers());
+    QMouseEvent pressEvent(QEvent::MouseButtonPress, e->localPos(), e->windowPos(), e->screenPos(),
+                           e->button(), e->buttons(), e->modifiers(), e->source());
     QCoreApplication::sendEvent(d->offscreenWindow, &pressEvent);
     e->setAccepted(pressEvent.isAccepted());
-    QMouseEvent mappedEvent(e->type(), e->localPos(), e->screenPos(), e->button(), e->buttons(),
-                            e->modifiers());
+    QMouseEvent mappedEvent(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                            e->button(), e->buttons(), e->modifiers(), e->source());
     QCoreApplication::sendEvent(d->offscreenWindow, &mappedEvent);
 }
 
@@ -1323,7 +1330,8 @@ void QQuickWidget::mousePressEvent(QMouseEvent *e)
     Q_QUICK_INPUT_PROFILE(QQuickProfiler::Mouse, QQuickProfiler::InputMousePress, e->button(),
                           e->buttons());
 
-    QMouseEvent mappedEvent(e->type(), e->localPos(), e->screenPos(), e->button(), e->buttons(), e->modifiers());
+    QMouseEvent mappedEvent(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                            e->button(), e->buttons(), e->modifiers(), e->source());
     QCoreApplication::sendEvent(d->offscreenWindow, &mappedEvent);
     e->setAccepted(mappedEvent.isAccepted());
 }
@@ -1335,7 +1343,8 @@ void QQuickWidget::mouseReleaseEvent(QMouseEvent *e)
     Q_QUICK_INPUT_PROFILE(QQuickProfiler::Mouse, QQuickProfiler::InputMouseRelease, e->button(),
                           e->buttons());
 
-    QMouseEvent mappedEvent(e->type(), e->localPos(), e->screenPos(), e->button(), e->buttons(), e->modifiers());
+    QMouseEvent mappedEvent(e->type(), e->localPos(), e->windowPos(), e->screenPos(),
+                            e->button(), e->buttons(), e->modifiers(), e->source());
     QCoreApplication::sendEvent(d->offscreenWindow, &mappedEvent);
     e->setAccepted(mappedEvent.isAccepted());
 }
@@ -1385,21 +1394,55 @@ static Qt::WindowState resolveWindowState(Qt::WindowStates states)
     return Qt::WindowNoState;
 }
 
+static void remapInputMethodQueryEvent(QObject *object, QInputMethodQueryEvent *e)
+{
+    auto item = qobject_cast<QQuickItem *>(object);
+    if (!item)
+        return;
+
+    // Remap all QRectF values.
+    for (auto query : {Qt::ImCursorRectangle, Qt::ImAnchorRectangle, Qt::ImInputItemClipRectangle}) {
+        if (e->queries() & query) {
+            auto value = e->value(query);
+            if (value.canConvert<QRectF>())
+                e->setValue(query, item->mapRectToScene(value.toRectF()));
+        }
+    }
+    // Remap all QPointF values.
+    if (e->queries() & Qt::ImCursorPosition) {
+        auto value = e->value(Qt::ImCursorPosition);
+        if (value.canConvert<QPointF>())
+            e->setValue(Qt::ImCursorPosition, item->mapToScene(value.toPointF()));
+    }
+}
+
 /*! \reimp */
 bool QQuickWidget::event(QEvent *e)
 {
     Q_D(QQuickWidget);
 
     switch (e->type()) {
-    case QEvent::InputMethod:
-    case QEvent::InputMethodQuery:
 
+    case QEvent::Leave:
     case QEvent::TouchBegin:
     case QEvent::TouchEnd:
     case QEvent::TouchUpdate:
     case QEvent::TouchCancel:
         // Touch events only have local and global positions, no need to map.
         return QCoreApplication::sendEvent(d->offscreenWindow, e);
+
+    case QEvent::InputMethod:
+        return QCoreApplication::sendEvent(d->offscreenWindow->focusObject(), e);
+    case QEvent::InputMethodQuery:
+        {
+            bool eventResult = QCoreApplication::sendEvent(d->offscreenWindow->focusObject(), e);
+            // The result in focusObject are based on offscreenWindow. But
+            // the inputMethodTransform won't get updated because the focus
+            // is on QQuickWidget. We need to remap the value based on the
+            // widget.
+            remapInputMethodQueryEvent(d->offscreenWindow->focusObject(), static_cast<QInputMethodQueryEvent *>(e));
+            return eventResult;
+        }
 
     case QEvent::WindowChangeInternal:
         d->handleWindowChange();
@@ -1443,6 +1486,14 @@ bool QQuickWidget::event(QEvent *e)
     case QEvent::ShortcutOverride:
         return QCoreApplication::sendEvent(d->offscreenWindow, e);
 
+    case QEvent::Enter: {
+        QEnterEvent *enterEvent = static_cast<QEnterEvent *>(e);
+        QEnterEvent mappedEvent(enterEvent->localPos(), enterEvent->windowPos(),
+                                enterEvent->screenPos());
+        const bool ret = QCoreApplication::sendEvent(d->offscreenWindow, &mappedEvent);
+        e->setAccepted(mappedEvent.isAccepted());
+        return ret;
+    }
     default:
         break;
     }

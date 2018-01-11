@@ -366,8 +366,7 @@ public:
     int append(QV4::Object *object);
     void insert(int elementIndex, QV4::Object *object);
 
-    void clear();
-    void remove(int index, int count);
+    Q_REQUIRED_RESULT QVector<std::function<void()>> remove(int index, int count);
 
     int appendElement();
     void insertElement(int index);

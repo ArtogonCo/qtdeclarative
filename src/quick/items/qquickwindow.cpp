@@ -77,6 +77,9 @@
 # include <private/qopenglvertexarrayobject_p.h>
 # include <private/qsgdefaultrendercontext_p.h>
 #endif
+#ifndef QT_NO_DEBUG_STREAM
+#include <private/qdebug_p.h>
+#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -87,6 +90,7 @@ Q_LOGGING_CATEGORY(DBG_MOUSE_TARGET, "qt.quick.mouse.target")
 Q_LOGGING_CATEGORY(DBG_HOVER_TRACE, "qt.quick.hover.trace")
 Q_LOGGING_CATEGORY(DBG_FOCUS, "qt.quick.focus")
 Q_LOGGING_CATEGORY(DBG_DIRTY, "qt.quick.dirty")
+Q_LOGGING_CATEGORY(lcTransient, "qt.quick.window.transient")
 
 extern Q_GUI_EXPORT QImage qt_gl_read_framebuffer(const QSize &size, bool alpha_format, bool include_alpha);
 
@@ -567,11 +571,19 @@ void QQuickWindowPrivate::init(QQuickWindow *c, QQuickRenderControl *control)
 
     QObject::connect(q, SIGNAL(focusObjectChanged(QObject*)), q, SIGNAL(activeFocusItemChanged()));
     QObject::connect(q, SIGNAL(screenChanged(QScreen*)), q, SLOT(handleScreenChanged(QScreen*)));
-
+    QObject::connect(qApp, SIGNAL(applicationStateChanged(Qt::ApplicationState)),
+                     q, SLOT(handleApplicationStateChanged(Qt::ApplicationState)));
     QObject::connect(q, SIGNAL(frameSwapped()), q, SLOT(runJobsAfterSwap()), Qt::DirectConnection);
 
     if (QQmlInspectorService *service = QQmlDebugConnector::service<QQmlInspectorService>())
         service->addWindow(q);
+}
+
+void QQuickWindow::handleApplicationStateChanged(Qt::ApplicationState state)
+{
+    Q_D(QQuickWindow);
+    if (state != Qt::ApplicationActive && d->contentItem)
+        d->contentItem->windowDeactivateEvent();
 }
 
 /*!
@@ -738,40 +750,6 @@ bool QQuickWindowPrivate::deliverTouchAsMouse(QQuickItem *item, QQuickPointerEve
     return false;
 }
 
-void QQuickWindowPrivate::setMouseGrabber(QQuickItem *grabber)
-{
-    Q_Q(QQuickWindow);
-    if (q->mouseGrabberItem() == grabber)
-        return;
-
-    qCDebug(DBG_MOUSE_TARGET) << "grabber" << q->mouseGrabberItem() << "->" << grabber;
-    QQuickItem *oldGrabber = q->mouseGrabberItem();
-    bool fromTouch = false;
-
-    if (grabber && touchMouseId != -1 && touchMouseDevice) {
-        // update the touch item for mouse touch id to the new grabber
-        qCDebug(DBG_TOUCH_TARGET) << "TP (mouse)" << hex << touchMouseId << "->" << q->mouseGrabberItem();
-        auto point = pointerEventInstance(touchMouseDevice)->pointById(touchMouseId);
-        if (point)
-            point->setGrabber(grabber);
-        fromTouch = true;
-    } else {
-        QQuickPointerEvent *event = pointerEventInstance(QQuickPointerDevice::genericMouseDevice());
-        Q_ASSERT(event->pointCount() == 1);
-        event->point(0)->setGrabber(grabber);
-    }
-
-    if (oldGrabber) {
-        QEvent e(QEvent::UngrabMouse);
-        QSet<QQuickItem *> hasFiltered;
-        if (!sendFilteredMouseEvent(oldGrabber->parentItem(), oldGrabber, &e, &hasFiltered)) {
-            oldGrabber->mouseUngrabEvent();
-            if (fromTouch)
-                oldGrabber->touchUngrabEvent();
-        }
-    }
-}
-
 void QQuickWindowPrivate::grabTouchPoints(QQuickItem *grabber, const QVector<int> &ids)
 {
     QSet<QQuickItem*> ungrab;
@@ -817,21 +795,41 @@ void QQuickWindowPrivate::removeGrabber(QQuickItem *grabber, bool mouse, bool to
 {
     Q_Q(QQuickWindow);
     if (Q_LIKELY(mouse) && q->mouseGrabberItem() == grabber) {
-        qCDebug(DBG_MOUSE_TARGET) << "removeGrabber" << q->mouseGrabberItem() << "-> null";
-        setMouseGrabber(nullptr);
+        bool fromTouch = isDeliveringTouchAsMouse();
+        auto point = fromTouch ?
+            pointerEventInstance(touchMouseDevice)->pointById(touchMouseId) :
+            pointerEventInstance(QQuickPointerDevice::genericMouseDevice())->point(0);
+        QQuickItem *oldGrabber = point->grabber();
+        qCDebug(DBG_MOUSE_TARGET) << "removeGrabber" << oldGrabber << "-> null";
+        point->setGrabber(nullptr);
+        sendUngrabEvent(oldGrabber, fromTouch);
     }
     if (Q_LIKELY(touch)) {
         const auto touchDevices = QQuickPointerDevice::touchDevices();
         for (auto device : touchDevices) {
-            auto pointerEvent = pointerEventInstance(device);
-            for (int i = 0; i < pointerEvent->pointCount(); ++i) {
-                if (pointerEvent->point(i)->grabber() == grabber) {
-                    pointerEvent->point(i)->setGrabber(nullptr);
-                    // FIXME send ungrab event only once
-                    grabber->touchUngrabEvent();
+            if (auto pointerEvent = queryPointerEventInstance(device)) {
+                for (int i = 0; i < pointerEvent->pointCount(); ++i) {
+                    if (pointerEvent->point(i)->grabber() == grabber) {
+                        pointerEvent->point(i)->setGrabber(nullptr);
+                        // FIXME send ungrab event only once
+                        grabber->touchUngrabEvent();
+                    }
                 }
             }
         }
+    }
+}
+
+void QQuickWindowPrivate::sendUngrabEvent(QQuickItem *grabber, bool touch)
+{
+    if (!grabber)
+        return;
+    QEvent e(QEvent::UngrabMouse);
+    QSet<QQuickItem *> hasFiltered;
+    if (!sendFilteredMouseEvent(grabber->parentItem(), grabber, &e, &hasFiltered)) {
+        grabber->mouseUngrabEvent();
+        if (touch)
+            grabber->touchUngrabEvent();
     }
 }
 
@@ -1291,6 +1289,8 @@ QQuickWindow::~QQuickWindow()
     delete d->dragGrabber; d->dragGrabber = 0;
 #endif
     delete d->contentItem; d->contentItem = 0;
+    qDeleteAll(d->pointerEventInstances);
+    d->pointerEventInstances.clear();
 
     d->renderJobMutex.lock();
     qDeleteAll(d->beforeSynchronizingJobs);
@@ -1491,15 +1491,16 @@ QQuickItem *QQuickWindow::mouseGrabberItem() const
 {
     Q_D(const QQuickWindow);
 
-    if (d->touchMouseId != -1 && d->touchMouseDevice) {
-        QQuickPointerEvent *event = d->pointerEventInstance(d->touchMouseDevice);
-        auto point = event->pointById(d->touchMouseId);
-        return point ? point->grabber() : nullptr;
+    if (d->isDeliveringTouchAsMouse()) {
+        if (QQuickPointerEvent *event = d->queryPointerEventInstance(d->touchMouseDevice)) {
+            auto point = event->pointById(d->touchMouseId);
+            return point ? point->grabber() : nullptr;
+        }
+    } else if (QQuickPointerEvent *event = d->queryPointerEventInstance(QQuickPointerDevice::genericMouseDevice())) {
+        Q_ASSERT(event->pointCount());
+        return event->point(0)->grabber();
     }
-
-    QQuickPointerEvent *event = d->pointerEventInstance(QQuickPointerDevice::genericMouseDevice());
-    Q_ASSERT(event->pointCount());
-    return event->point(0)->grabber();
+    return nullptr;
 }
 
 
@@ -1652,6 +1653,9 @@ void QQuickWindowPrivate::deliverMouseEvent(QQuickPointerMouseEvent *pointerEven
     auto point = pointerEvent->point(0);
     lastMousePosition = point->scenePos();
     QQuickItem *grabber = point->grabber();
+    if (!grabber && isDeliveringTouchAsMouse())
+        grabber = q->mouseGrabberItem();
+
     if (grabber) {
         // if the update consists of changing button state, then don't accept it
         // unless the button is one in which the item is interested
@@ -2111,15 +2115,21 @@ void QQuickWindowPrivate::flushFrameSynchronousEvents()
     }
 }
 
-QQuickPointerEvent *QQuickWindowPrivate::pointerEventInstance(QQuickPointerDevice *device) const
+QQuickPointerEvent *QQuickWindowPrivate::queryPointerEventInstance(QQuickPointerDevice *device) const
 {
     // the list of devices should be very small so a linear search should be ok
     for (QQuickPointerEvent *e: pointerEventInstances) {
         if (e->device() == device)
             return e;
     }
+    return nullptr;
+}
 
-    QQuickPointerEvent *ev = nullptr;
+QQuickPointerEvent *QQuickWindowPrivate::pointerEventInstance(QQuickPointerDevice *device) const
+{
+    QQuickPointerEvent *ev = queryPointerEventInstance(device);
+    if (ev)
+        return ev;
     QQuickWindow *q = const_cast<QQuickWindow*>(q_func());
     switch (device->type()) {
     case QQuickPointerDevice::Mouse:
@@ -2732,8 +2742,10 @@ void QQuickWindowPrivate::data_append(QQmlListProperty<QObject> *property, QObje
     if (!o)
         return;
     QQuickWindow *that = static_cast<QQuickWindow *>(property->object);
-    if (QQuickWindow *window = qmlobject_cast<QQuickWindow *>(o))
+    if (QQuickWindow *window = qmlobject_cast<QQuickWindow *>(o)) {
+        qCDebug(lcTransient) << window << "is transient for" << that;
         window->setTransientParent(that);
+    }
     QQmlListProperty<QObject> itemProperty = QQuickItemPrivate::get(that->contentItem())->data();
     itemProperty.append(&itemProperty, o);
 }
@@ -3260,6 +3272,7 @@ void QQuickWindow::cleanupSceneGraph()
 
 void QQuickWindow::setTransientParent_helper(QQuickWindow *window)
 {
+    qCDebug(lcTransient) << this << "is transient for" << window;
     setTransientParent(window);
     disconnect(sender(), SIGNAL(windowChanged(QQuickWindow*)),
                this, SLOT(setTransientParent_helper(QQuickWindow*)));
@@ -4651,6 +4664,37 @@ QSGNinePatchNode *QQuickWindow::createNinePatchNode() const
     Q_D(const QQuickWindow);
     return isSceneGraphInitialized() ? d->context->sceneGraphContext()->createNinePatchNode() : nullptr;
 }
+
+#ifndef QT_NO_DEBUG_STREAM
+QDebug operator<<(QDebug debug, const QQuickWindow *win)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace();
+    if (!win) {
+        debug << "QQuickWindow(0)";
+        return debug;
+    }
+
+    debug << win->metaObject()->className() << '(' << static_cast<const void *>(win);
+    if (win->isActive())
+        debug << " active";
+    if (win->isExposed())
+        debug << " exposed";
+    debug << ", visibility=" << win->visibility() << ", flags=" << win->flags();
+    if (!win->title().isEmpty())
+        debug << ", title=" << win->title();
+    if (!win->objectName().isEmpty())
+        debug << ", name=" << win->objectName();
+    if (win->parent())
+        debug << ", parent=" << static_cast<const void *>(win->parent());
+    if (win->transientParent())
+        debug << ", transientParent=" << static_cast<const void *>(win->transientParent());
+    debug << ", geometry=";
+    QtDebugUtils::formatQRect(debug, win->geometry());
+    debug << ')';
+    return debug;
+}
+#endif
 
 #include "moc_qquickwindow.cpp"
 
