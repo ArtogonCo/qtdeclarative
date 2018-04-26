@@ -143,7 +143,7 @@ QV4::CompiledData::CompilationUnit *QQmlTypeCompiler::compile()
         QmlIR::JSCodeGen v4CodeGenerator(typeData->urlString(), typeData->finalUrlString(),
                                          document->code, &document->jsModule,
                                          &document->jsParserEngine, document->program,
-                                         typeNameCache, &document->jsGenerator.stringTable);
+                                         typeNameCache, &document->jsGenerator.stringTable, engine->v8engine()->illegalNames());
         QQmlJSCodeGenerator jsCodeGen(this, &v4CodeGenerator);
         if (!jsCodeGen.generateCodeForComponents())
             return nullptr;
@@ -1010,7 +1010,11 @@ bool QQmlComponentAndAliasResolver::resolveAliases(int componentIndex)
             }
 
             if (result == AllAliasesResolved) {
-                aliasCacheCreator.appendAliasesToPropertyCache(*qmlObjects->at(componentIndex), objectIndex);
+                QQmlCompileError error = aliasCacheCreator.appendAliasesToPropertyCache(*qmlObjects->at(componentIndex), objectIndex);
+                if (error.isSet()) {
+                    recordError(error);
+                    return false;
+                }
                 atLeastOneAliasResolved = true;
             } else if (result == SomeAliasesResolved) {
                 atLeastOneAliasResolved = true;

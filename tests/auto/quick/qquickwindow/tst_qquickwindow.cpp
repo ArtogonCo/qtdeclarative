@@ -47,6 +47,8 @@
 #include <QOpenGLFunctions>
 #include <QSGRendererInterface>
 
+Q_LOGGING_CATEGORY(lcTests, "qt.quick.tests")
+
 struct TouchEventData {
     QEvent::Type type;
     QWidget *widget;
@@ -140,8 +142,9 @@ class TestTouchItem : public QQuickRectangle
 public:
     TestTouchItem(QQuickItem *parent = 0)
         : QQuickRectangle(parent), acceptTouchEvents(true), acceptMouseEvents(true),
-          mousePressId(0),
-          spinLoopWhenPressed(false), touchEventCount(0)
+          mousePressCount(0), mouseMoveCount(0),
+          spinLoopWhenPressed(false), touchEventCount(0),
+          mouseUngrabEventCount(0)
     {
         border()->setWidth(1);
         setAcceptedMouseButtons(Qt::LeftButton);
@@ -159,9 +162,11 @@ public:
         lastMousePos = QPointF();
         lastMouseCapabilityFlags = 0;
         touchEventCount = 0;
+        mouseMoveCount = 0;
+        mouseUngrabEventCount = 0;
     }
 
-    static void clearMousePressCounter()
+    static void clearMouseEventCounters()
     {
         mousePressNum = mouseMoveNum = mouseReleaseNum = 0;
     }
@@ -174,9 +179,11 @@ public:
     bool acceptTouchEvents;
     bool acceptMouseEvents;
     TouchEventData lastEvent;
-    int mousePressId;
+    int mousePressCount;
+    int mouseMoveCount;
     bool spinLoopWhenPressed;
     int touchEventCount;
+    int mouseUngrabEventCount;
     QVector2D lastVelocity;
     QVector2D lastVelocityFromMouseMove;
     QPointF lastMousePos;
@@ -204,7 +211,7 @@ public:
             e->ignore();
             return;
         }
-        mousePressId = ++mousePressNum;
+        mousePressCount = ++mousePressNum;
         lastMousePos = e->pos();
         lastMouseCapabilityFlags = QGuiApplicationPrivate::mouseEventCaps(e);
     }
@@ -214,7 +221,7 @@ public:
             e->ignore();
             return;
         }
-        ++mouseMoveNum;
+        mouseMoveCount = ++mouseMoveNum;
         lastVelocityFromMouseMove = QGuiApplicationPrivate::mouseEventVelocity(e);
         lastMouseCapabilityFlags = QGuiApplicationPrivate::mouseEventCaps(e);
         lastMousePos = e->pos();
@@ -230,10 +237,23 @@ public:
         lastMouseCapabilityFlags = QGuiApplicationPrivate::mouseEventCaps(e);
     }
 
-    bool childMouseEventFilter(QQuickItem *, QEvent *event) {
-        // TODO Is it a bug if a QTouchEvent comes here?
-        if (event->type() == QEvent::MouseButtonPress)
-            mousePressId = ++mousePressNum;
+    void mouseUngrabEvent() {
+        ++mouseUngrabEventCount;
+    }
+
+    bool childMouseEventFilter(QQuickItem *item, QEvent *e) {
+        qCDebug(lcTests) << objectName() << "filtering" << e << "ahead of delivery to" << item->metaObject()->className() << item->objectName();
+        switch (e->type()) {
+        case QEvent::MouseButtonPress:
+            mousePressCount = ++mousePressNum;
+            break;
+        case QEvent::MouseMove:
+            mouseMoveCount = ++mouseMoveNum;
+            break;
+        default:
+            break;
+        }
+
         return false;
     }
 
@@ -271,6 +291,70 @@ protected:
     }
 };
 
+class MouseRecordingWindow : public QQuickWindow
+{
+public:
+    explicit MouseRecordingWindow(QWindow *parent = nullptr) : QQuickWindow(parent) { }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWindow::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWindow::mouseMoveEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWindow::mouseReleaseEvent(event);
+    }
+
+public:
+    QList<QMouseEvent> m_mouseEvents;
+};
+
+class MouseRecordingItem : public QQuickItem
+{
+public:
+    MouseRecordingItem(bool acceptTouch, QQuickItem *parent = nullptr)
+        : QQuickItem(parent)
+        , m_acceptTouch(acceptTouch)
+    {
+        setSize(QSizeF(300, 300));
+        setAcceptedMouseButtons(Qt::LeftButton);
+    }
+
+protected:
+    void touchEvent(QTouchEvent* event) override {
+        event->setAccepted(m_acceptTouch);
+        m_touchEvents << *event;
+        qCDebug(lcTests) << "accepted?" << event->isAccepted() << event;
+    }
+    void mousePressEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+
+public:
+    QList<QMouseEvent> m_mouseEvents;
+    QList<QTouchEvent> m_touchEvents;
+
+private:
+    bool m_acceptTouch;
+};
+
 class tst_qquickwindow : public QQmlDataTest
 {
     Q_OBJECT
@@ -301,6 +385,7 @@ private slots:
     void touchEvent_propagation();
     void touchEvent_propagation_data();
     void touchEvent_cancel();
+    void touchEvent_cancelClearsMouseGrab();
     void touchEvent_reentrant();
     void touchEvent_velocity();
 
@@ -308,6 +393,8 @@ private slots:
     void mergeTouchPointLists();
 
     void mouseFromTouch_basic();
+    void synthMouseFromTouch_data();
+    void synthMouseFromTouch();
 
     void clearWindow();
 
@@ -507,7 +594,7 @@ void tst_qquickwindow::constantUpdatesOnWindow()
 
 void tst_qquickwindow::touchEvent_basic()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
@@ -636,7 +723,7 @@ void tst_qquickwindow::touchEvent_basic()
 
 void tst_qquickwindow::touchEvent_propagation()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QFETCH(bool, acceptTouchEvents);
     QFETCH(bool, acceptMouseEvents);
@@ -679,9 +766,8 @@ void tst_qquickwindow::touchEvent_propagation()
 
     // single touch to top item, should be received by middle item
     QTest::touchEvent(window, touchDevice).press(0, pointInTopItem, window);
-    QTest::qWait(50);
+    QTRY_COMPARE(middleItem->lastEvent.touchPoints.count(), 1);
     QVERIFY(topItem->lastEvent.touchPoints.isEmpty());
-    QCOMPARE(middleItem->lastEvent.touchPoints.count(), 1);
     QVERIFY(bottomItem->lastEvent.touchPoints.isEmpty());
     COMPARE_TOUCH_DATA(middleItem->lastEvent, makeTouchData(QEvent::TouchBegin, window, Qt::TouchPointPressed,
             makeTouchPoint(middleItem, middleItem->mapFromItem(topItem, pos))));
@@ -690,9 +776,8 @@ void tst_qquickwindow::touchEvent_propagation()
     // touch top and middle items, middle item should get both events
     QTest::touchEvent(window, touchDevice).press(0, pointInTopItem, window)
             .press(1, pointInMiddleItem, window);
-    QTest::qWait(50);
+    QTRY_COMPARE(middleItem->lastEvent.touchPoints.count(), 2);
     QVERIFY(topItem->lastEvent.touchPoints.isEmpty());
-    QCOMPARE(middleItem->lastEvent.touchPoints.count(), 2);
     QVERIFY(bottomItem->lastEvent.touchPoints.isEmpty());
     COMPARE_TOUCH_DATA(middleItem->lastEvent, makeTouchData(QEvent::TouchBegin, window, Qt::TouchPointPressed,
            (QList<QTouchEvent::TouchPoint>() << makeTouchPoint(middleItem, middleItem->mapFromItem(topItem, pos))
@@ -710,10 +795,9 @@ void tst_qquickwindow::touchEvent_propagation()
     // touch top and middle items, bottom item should get all events
     QTest::touchEvent(window, touchDevice).press(0, pointInTopItem, window)
             .press(1, pointInMiddleItem, window);
-    QTest::qWait(50);
+    QTRY_COMPARE(bottomItem->lastEvent.touchPoints.count(), 2);
     QVERIFY(topItem->lastEvent.touchPoints.isEmpty());
     QVERIFY(middleItem->lastEvent.touchPoints.isEmpty());
-    QCOMPARE(bottomItem->lastEvent.touchPoints.count(), 2);
     COMPARE_TOUCH_DATA(bottomItem->lastEvent, makeTouchData(QEvent::TouchBegin, window, Qt::TouchPointPressed,
             (QList<QTouchEvent::TouchPoint>() << makeTouchPoint(bottomItem, bottomItem->mapFromItem(topItem, pos))
                                               << makeTouchPoint(bottomItem, bottomItem->mapFromItem(middleItem, pos)) )));
@@ -783,7 +867,7 @@ void tst_qquickwindow::touchEvent_propagation_data()
 
 void tst_qquickwindow::touchEvent_cancel()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
@@ -815,9 +899,41 @@ void tst_qquickwindow::touchEvent_cancel()
     delete item;
 }
 
+void tst_qquickwindow::touchEvent_cancelClearsMouseGrab()
+{
+    TestTouchItem::clearMouseEventCounters();
+
+    QQuickWindow *window = new QQuickWindow;
+    QScopedPointer<QQuickWindow> cleanup(window);
+
+    window->resize(250, 250);
+    window->setPosition(100, 100);
+    window->setTitle(QTest::currentTestFunction());
+    window->show();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+
+    TestTouchItem *item = new TestTouchItem(window->contentItem());
+    item->setPosition(QPointF(50, 50));
+    item->setSize(QSizeF(150, 150));
+    item->acceptMouseEvents = true;
+    item->acceptTouchEvents = false;
+
+    QPointF pos(50, 50);
+    QTest::touchEvent(window, touchDevice).press(0, item->mapToScene(pos).toPoint(), window);
+    QCoreApplication::processEvents();
+
+    QTRY_COMPARE(item->mousePressCount, 1);
+    QTRY_COMPARE(item->mouseUngrabEventCount, 0);
+
+    QWindowSystemInterface::handleTouchCancelEvent(0, touchDevice);
+    QCoreApplication::processEvents();
+
+    QTRY_COMPARE(item->mouseUngrabEventCount, 1);
+}
+
 void tst_qquickwindow::touchEvent_reentrant()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
@@ -856,7 +972,7 @@ void tst_qquickwindow::touchEvent_reentrant()
 
 void tst_qquickwindow::touchEvent_velocity()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
@@ -991,7 +1107,7 @@ void tst_qquickwindow::mouseFromTouch_basic()
     // should result in sending mouse events generated from the touch
     // with the new event propagation system.
 
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
     window->resize(250, 250);
@@ -1074,6 +1190,45 @@ void tst_qquickwindow::mouseFromTouch_basic()
     delete item;
 }
 
+void tst_qquickwindow::synthMouseFromTouch_data()
+{
+    QTest::addColumn<bool>("synthMouse"); // AA_SynthesizeMouseForUnhandledTouchEvents
+    QTest::addColumn<bool>("acceptTouch"); // QQuickItem::touchEvent: setAccepted()
+
+    QTest::newRow("no synth, accept") << false << true; // suitable for touch-capable UIs
+    QTest::newRow("no synth, don't accept") << false << false;
+    QTest::newRow("synth and accept") << true << true;
+    QTest::newRow("synth, don't accept") << true << false; // the default
+}
+
+void tst_qquickwindow::synthMouseFromTouch()
+{
+    QFETCH(bool, synthMouse);
+    QFETCH(bool, acceptTouch);
+
+    QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents, synthMouse);
+    QScopedPointer<MouseRecordingWindow> window(new MouseRecordingWindow);
+    QScopedPointer<MouseRecordingItem> item(new MouseRecordingItem(acceptTouch, nullptr));
+    item->setParentItem(window->contentItem());
+    window->resize(250, 250);
+    window->setPosition(100, 100);
+    window->setTitle(QTest::currentTestFunction());
+    window->show();
+    QVERIFY(QTest::qWaitForWindowActive(window.data()));
+
+    QPoint p1 = QPoint(20, 20);
+    QPoint p2 = QPoint(30, 30);
+    QTest::touchEvent(window.data(), touchDevice).press(0, p1, window.data());
+    QTest::touchEvent(window.data(), touchDevice).move(0, p2, window.data());
+    QTest::touchEvent(window.data(), touchDevice).release(0, p2, window.data());
+
+    QCOMPARE(item->m_touchEvents.count(), 3);
+    QCOMPARE(item->m_mouseEvents.count(), acceptTouch ? 0 : 3);
+    QCOMPARE(window->m_mouseEvents.count(), 0);
+    for (const QMouseEvent &ev : item->m_mouseEvents)
+        QCOMPARE(ev.source(), Qt::MouseEventSynthesizedByQt);
+}
+
 void tst_qquickwindow::clearWindow()
 {
     QQuickWindow *window = new QQuickWindow;
@@ -1092,7 +1247,7 @@ void tst_qquickwindow::clearWindow()
 
 void tst_qquickwindow::mouseFiltering()
 {
-    TestTouchItem::clearMousePressCounter();
+    TestTouchItem::clearMouseEventCounters();
 
     QQuickWindow *window = new QQuickWindow;
     QScopedPointer<QQuickWindow> cleanup(window);
@@ -1125,9 +1280,9 @@ void tst_qquickwindow::mouseFiltering()
     // 1. middleItem filters event
     // 2. bottomItem filters event
     // 3. topItem receives event
-    QTRY_COMPARE(middleItem->mousePressId, 1);
-    QTRY_COMPARE(bottomItem->mousePressId, 2);
-    QTRY_COMPARE(topItem->mousePressId, 3);
+    QTRY_COMPARE(middleItem->mousePressCount, 1);
+    QTRY_COMPARE(bottomItem->mousePressCount, 2);
+    QTRY_COMPARE(topItem->mousePressCount, 3);
 
     // clean up mouse press state for the next tests
     QTest::mouseRelease(window, Qt::LeftButton, 0, pos);

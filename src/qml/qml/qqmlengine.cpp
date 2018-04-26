@@ -110,7 +110,10 @@ Q_DECLARE_METATYPE(QQmlProperty)
 QT_BEGIN_NAMESPACE
 
 typedef QQmlData::BindingBitsType BindingBitsType;
-enum { MaxInlineBits = QQmlData::MaxInlineBits };
+enum {
+    BitsPerType = QQmlData::BitsPerType,
+    InlineBindingArraySize = QQmlData::InlineBindingArraySize
+};
 
 void qmlRegisterBaseTypes(const char *uri, int versionMajor, int versionMinor)
 {
@@ -741,12 +744,17 @@ QQmlData::QQmlData()
     : ownedByQml1(false), ownMemory(true), indestructible(true), explicitIndestructibleSet(false),
       hasTaintedV4Object(false), isQueuedForDeletion(false), rootObjectInCreation(false),
       hasInterceptorMetaObject(false), hasVMEMetaObject(false), parentFrozen(false),
-      bindingBitsSize(MaxInlineBits), bindingBitsValue(0), notifyList(0),
+      bindingBitsArraySize(InlineBindingArraySize), notifyList(0),
       bindings(0), signalHandlers(0), nextContextObject(0), prevContextObject(0),
-      lineNumber(0), columnNumber(0), jsEngineId(0), compilationUnit(0),
+      lineNumber(0), columnNumber(0), jsEngineId(0),
       propertyCache(0), guards(0), extendedData(0)
 {
+    memset(bindingBitsValue, 0, sizeof(bindingBitsValue));
     init();
+}
+
+QQmlData::~QQmlData()
+{
 }
 
 void QQmlData::destroyed(QAbstractDeclarativeData *d, QObject *o)
@@ -920,6 +928,14 @@ void QQmlData::flushPendingBindingImpl(QQmlPropertyIndex index)
                             QQmlPropertyData::DontRemoveBinding);
 }
 
+QQmlData::DeferredData::DeferredData()
+{
+}
+
+QQmlData::DeferredData::~DeferredData()
+{
+}
+
 bool QQmlEnginePrivate::baseModulesUninitialized = true;
 void QQmlEnginePrivate::init()
 {
@@ -1082,7 +1098,9 @@ QQmlEngine::~QQmlEngine()
 void QQmlEngine::clearComponentCache()
 {
     Q_D(QQmlEngine);
+    d->typeLoader.lock();
     d->typeLoader.clearCache();
+    d->typeLoader.unlock();
 }
 
 /*!
@@ -1647,7 +1665,6 @@ void QQmlData::deferData(int objectIndex, QV4::CompiledData::CompilationUnit *co
     QQmlData::DeferredData *deferData = new QQmlData::DeferredData;
     deferData->deferredIdx = objectIndex;
     deferData->compilationUnit = compilationUnit;
-    deferData->compilationUnit->addref();
     deferData->context = context;
 
     const QV4::CompiledData::Object *compiledObject = compilationUnit->objectAt(objectIndex);
@@ -1669,7 +1686,6 @@ void QQmlData::releaseDeferredData()
     while (it != deferredData.end()) {
         DeferredData *deferData = *it;
         if (deferData->bindings.isEmpty()) {
-            deferData->compilationUnit->release();
             delete deferData;
             it = deferredData.erase(it);
         } else {
@@ -1747,12 +1763,10 @@ void QQmlData::destroyed(QObject *object)
     if (bindings && !bindings->ref.deref())
         delete bindings;
 
-    if (compilationUnit) {
-        compilationUnit->release();
-        compilationUnit = 0;
-    }
+    compilationUnit = nullptr;
 
-    releaseDeferredData();
+    qDeleteAll(deferredData);
+    deferredData.clear();
 
     QQmlBoundSignal *signalHandler = signalHandlers;
     while (signalHandler) {
@@ -1792,7 +1806,7 @@ void QQmlData::destroyed(QObject *object)
         signalHandler = next;
     }
 
-    if (bindingBitsSize > MaxInlineBits)
+    if (bindingBitsArraySize > InlineBindingArraySize)
         free(bindingBits);
 
     if (propertyCache)
@@ -1841,47 +1855,35 @@ void QQmlData::parentChanged(QObject *object, QObject *parent)
 
 static void QQmlData_setBit(QQmlData *data, QObject *obj, int bit)
 {
-    if (Q_UNLIKELY(data->bindingBitsSize <= bit)) {
+    uint offset = QQmlData::offsetForBit(bit);
+    BindingBitsType *bits = (data->bindingBitsArraySize == InlineBindingArraySize) ? data->bindingBitsValue : data->bindingBits;
+    if (Q_UNLIKELY(data->bindingBitsArraySize <= offset)) {
         int props = QQmlMetaObject(obj).propertyCount();
         Q_ASSERT(bit < 2 * props);
 
-        int arraySize = (2 * props + MaxInlineBits - 1) / MaxInlineBits;
-        Q_ASSERT(arraySize > 1);
+        uint arraySize = (2 * static_cast<uint>(props) + BitsPerType - 1) / BitsPerType;
+        Q_ASSERT(arraySize > InlineBindingArraySize && arraySize > data->bindingBitsArraySize);
 
-        // special handling for 32 here is to make sure we wipe the first byte
-        // when going from bindingBitsValue to bindingBits, and preserve the old
-        // set bits so we can restore them after the allocation
-        int oldArraySize = data->bindingBitsSize > MaxInlineBits ? data->bindingBitsSize / MaxInlineBits : 0;
-        quintptr oldValue = data->bindingBitsSize == MaxInlineBits ? data->bindingBitsValue : 0;
+        BindingBitsType *newBits = static_cast<BindingBitsType *>(malloc(arraySize*sizeof(BindingBitsType)));
+        memcpy(newBits, bits, data->bindingBitsArraySize * sizeof(BindingBitsType));
+        memset(newBits + data->bindingBitsArraySize, 0, sizeof(BindingBitsType) * (arraySize - data->bindingBitsArraySize));
 
-        data->bindingBits = static_cast<BindingBitsType *>(realloc((data->bindingBitsSize == MaxInlineBits) ? 0 : data->bindingBits,
-                                                                   arraySize * sizeof(BindingBitsType)));
-
-        memset(data->bindingBits + oldArraySize,
-               0x00,
-               sizeof(BindingBitsType) * (arraySize - oldArraySize));
-
-        data->bindingBitsSize = arraySize * MaxInlineBits;
-
-        // reinstate bindingBitsValue after we dropped it
-        if (oldValue) {
-            memcpy(data->bindingBits, &oldValue, sizeof(oldValue));
-        }
+        if (data->bindingBitsArraySize > InlineBindingArraySize)
+            free(bits);
+        data->bindingBits = newBits;
+        bits = newBits;
+        data->bindingBitsArraySize = arraySize;
     }
-
-    if (data->bindingBitsSize == MaxInlineBits)
-        data->bindingBitsValue |= BindingBitsType(1) << bit;
-    else
-        data->bindingBits[bit / MaxInlineBits] |= (BindingBitsType(1) << (bit % MaxInlineBits));
+    Q_ASSERT(offset < data->bindingBitsArraySize);
+    bits[offset] |= QQmlData::bitFlagForBit(bit);
 }
 
 static void QQmlData_clearBit(QQmlData *data, int bit)
 {
-    if (data->bindingBitsSize > bit) {
-        if (data->bindingBitsSize == MaxInlineBits)
-            data->bindingBitsValue &= ~(BindingBitsType(1) << (bit % MaxInlineBits));
-        else
-            data->bindingBits[bit / MaxInlineBits] &= ~(BindingBitsType(1) << (bit % MaxInlineBits));
+    uint offset = QQmlData::offsetForBit(bit);
+    if (data->bindingBitsArraySize > offset) {
+        BindingBitsType *bits = (data->bindingBitsArraySize == InlineBindingArraySize) ? data->bindingBitsValue : data->bindingBits;
+        bits[offset] &= ~QQmlData::bitFlagForBit(bit);
     }
 }
 

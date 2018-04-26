@@ -214,6 +214,8 @@ QVariant QQmlEngineDebugServiceImpl::valueContents(QVariant value) const
         case QMetaType::QRectF:
         case QMetaType::QPoint:
         case QMetaType::QPointF:
+        case QMetaType::QSize:
+        case QMetaType::QSizeF:
         case QMetaType::QFont:
             // Don't call the toString() method on those. The stream operators are better.
             return value;
@@ -810,7 +812,8 @@ void QQmlEngineDebugServiceImpl::engineAboutToBeRemoved(QJSEngine *engine)
 void QQmlEngineDebugServiceImpl::objectCreated(QJSEngine *engine, QObject *object)
 {
     Q_ASSERT(engine);
-    Q_ASSERT(m_engines.contains(engine));
+    if (!m_engines.contains(engine))
+        return;
 
     int engineId = QQmlDebugService::idForObject(engine);
     int objectId = QQmlDebugService::idForObject(object);

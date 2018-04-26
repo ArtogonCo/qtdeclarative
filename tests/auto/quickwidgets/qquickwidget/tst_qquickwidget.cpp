@@ -27,6 +27,7 @@
 ****************************************************************************/
 
 #include <qtest.h>
+#include <qtesttouch.h>
 #include <QtTest/QSignalSpy>
 #include <QtQml/qqmlcomponent.h>
 #include <QtQml/qqmlcontext.h>
@@ -37,8 +38,76 @@
 #include <QtGui/QImage>
 #include <QtCore/QDebug>
 #include <QtQml/qqmlengine.h>
-
+#include <QtCore/QLoggingCategory>
 #include <QtQuickWidgets/QQuickWidget>
+
+Q_LOGGING_CATEGORY(lcTests, "qt.quick.tests")
+
+class MouseRecordingQQWidget : public QQuickWidget
+{
+public:
+    explicit MouseRecordingQQWidget(QWidget *parent = nullptr) : QQuickWidget(parent) {
+        setAttribute(Qt::WA_AcceptTouchEvents);
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWidget::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWidget::mouseMoveEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+        QQuickWidget::mouseReleaseEvent(event);
+    }
+
+public:
+    QList<QMouseEvent> m_mouseEvents;
+};
+
+class MouseRecordingItem : public QQuickItem
+{
+public:
+    MouseRecordingItem(bool acceptTouch, QQuickItem *parent = nullptr)
+        : QQuickItem(parent)
+        , m_acceptTouch(acceptTouch)
+    {
+        setSize(QSizeF(300, 300));
+        setAcceptedMouseButtons(Qt::LeftButton);
+    }
+
+protected:
+    void touchEvent(QTouchEvent* event) override {
+        event->setAccepted(m_acceptTouch);
+        m_touchEvents << *event;
+        qCDebug(lcTests) << "accepted?" << event->isAccepted() << event;
+    }
+    void mousePressEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        qCDebug(lcTests) << event;
+        m_mouseEvents << *event;
+    }
+
+public:
+    QList<QMouseEvent> m_mouseEvents;
+    QList<QTouchEvent> m_touchEvents;
+
+private:
+    bool m_acceptTouch;
+};
 
 class tst_qquickwidget : public QQmlDataTest
 {
@@ -62,8 +131,13 @@ private slots:
     void keyEvents();
     void shortcuts();
     void enterLeave();
-};
+    void mouseEventWindowPos();
+    void synthMouseFromTouch_data();
+    void synthMouseFromTouch();
 
+private:
+    QTouchDevice *device = QTest::createTouchDevice();
+};
 
 tst_qquickwidget::tst_qquickwidget()
 {
@@ -431,6 +505,76 @@ void tst_qquickwidget::enterLeave()
     // Now check the leave
     QCursor::setPos(view.pos() - QPoint(50, 50));
     QTRY_VERIFY(!rootItem->property("hasMouse").toBool());
+}
+
+void tst_qquickwidget::mouseEventWindowPos()
+{
+    QWidget widget;
+    widget.resize(100, 100);
+    QQuickWidget *quick = new QQuickWidget(&widget);
+    quick->setSource(testFileUrl("mouse.qml"));
+    quick->move(50, 50);
+    widget.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&widget, 5000));
+    QQuickItem *rootItem = quick->rootObject();
+    QVERIFY(rootItem);
+
+    QVERIFY(!rootItem->property("wasClicked").toBool());
+    QVERIFY(!rootItem->property("wasDoubleClicked").toBool());
+    QVERIFY(!rootItem->property("wasMoved").toBool());
+
+    QWindow *window = widget.windowHandle();
+    QVERIFY(window);
+
+    QTest::mouseMove(window, QPoint(60, 60));
+    QTest::mouseClick(window, Qt::LeftButton, Qt::KeyboardModifiers(), QPoint(60, 60));
+    QTRY_VERIFY(rootItem->property("wasClicked").toBool());
+    QTest::mouseDClick(window, Qt::LeftButton, Qt::KeyboardModifiers(), QPoint(60, 60));
+    QTRY_VERIFY(rootItem->property("wasDoubleClicked").toBool());
+    QTest::mouseMove(window, QPoint(70, 70));
+    QTRY_VERIFY(rootItem->property("wasMoved").toBool());
+}
+
+void tst_qquickwidget::synthMouseFromTouch_data()
+{
+    QTest::addColumn<bool>("synthMouse"); // AA_SynthesizeMouseForUnhandledTouchEvents
+    QTest::addColumn<bool>("acceptTouch"); // QQuickItem::touchEvent: setAccepted()
+
+    QTest::newRow("no synth, accept") << false << true; // suitable for touch-capable UIs
+    QTest::newRow("no synth, don't accept") << false << false;
+    QTest::newRow("synth and accept") << true << true;
+    QTest::newRow("synth, don't accept") << true << false; // the default
+}
+
+void tst_qquickwidget::synthMouseFromTouch()
+{
+    QFETCH(bool, synthMouse);
+    QFETCH(bool, acceptTouch);
+
+    QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents, synthMouse);
+    QWidget window;
+    window.setAttribute(Qt::WA_AcceptTouchEvents);
+    QScopedPointer<MouseRecordingQQWidget> childView(new MouseRecordingQQWidget(&window));
+    MouseRecordingItem *item = new MouseRecordingItem(acceptTouch, nullptr);
+    childView->setContent(QUrl(), nullptr, item);
+    window.resize(300, 300);
+    childView->resize(300, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QVERIFY(childView->quickWindow()->isVisible());
+    QVERIFY(item->isVisible());
+
+    QPoint p1 = QPoint(20, 20);
+    QPoint p2 = QPoint(30, 30);
+    QTest::touchEvent(&window, device).press(0, p1, &window);
+    QTest::touchEvent(&window, device).move(0, p2, &window);
+    QTest::touchEvent(&window, device).release(0, p2, &window);
+
+    QCOMPARE(item->m_touchEvents.count(), 3);
+    QCOMPARE(item->m_mouseEvents.count(), acceptTouch ? 0 : 3);
+    QCOMPARE(childView->m_mouseEvents.count(), 0);
+    for (const QMouseEvent &ev : item->m_mouseEvents)
+        QCOMPARE(ev.source(), Qt::MouseEventSynthesizedByQt);
 }
 
 QTEST_MAIN(tst_qquickwidget)

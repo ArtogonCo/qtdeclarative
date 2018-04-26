@@ -56,6 +56,7 @@
 #include <private/qqmlpropertyindex_p.h>
 #include <private/qv4value_p.h>
 #include <private/qv4persistent_p.h>
+#include <private/qqmlrefcount_p.h>
 #include <qjsengine.h>
 #include <qvector.h>
 
@@ -116,6 +117,7 @@ class Q_QML_PRIVATE_EXPORT QQmlData : public QAbstractDeclarativeData
 {
 public:
     QQmlData();
+    ~QQmlData();
 
     static inline void init() {
         static bool initialized = false;
@@ -156,18 +158,21 @@ public:
     quint32 hasInterceptorMetaObject:1;
     quint32 hasVMEMetaObject:1;
     quint32 parentFrozen:1;
-    quint32 dummy:22;
+    quint32 dummy:6;
 
     // When bindingBitsSize < sizeof(ptr), we store the binding bit flags inside
     // bindingBitsValue. When we need more than sizeof(ptr) bits, we allocated
     // sufficient space and use bindingBits to point to it.
-    int bindingBitsSize;
+    quint32 bindingBitsArraySize : 16;
     typedef quintptr BindingBitsType;
+    enum {
+        BitsPerType = sizeof(BindingBitsType) * 8,
+        InlineBindingArraySize = 2
+    };
     union {
         BindingBitsType *bindingBits;
-        BindingBitsType bindingBitsValue;
+        BindingBitsType bindingBitsValue[InlineBindingArraySize];
     };
-    enum { MaxInlineBits = sizeof(BindingBitsType) * 8 };
 
     struct NotifyList {
         quint64 connectionMask;
@@ -216,12 +221,15 @@ public:
     quint32 jsEngineId; // id of the engine that created the jsWrapper
 
     struct DeferredData {
+        DeferredData();
+        ~DeferredData();
         unsigned int deferredIdx;
         QMultiHash<int, const QV4::CompiledData::Binding *> bindings;
-        QV4::CompiledData::CompilationUnit *compilationUnit;//Not always the same as the other compilation unit
+        QQmlRefPointer<QV4::CompiledData::CompilationUnit> compilationUnit;//Not always the same as the other compilation unit
         QQmlContextData *context;//Could be either context or outerContext
+        Q_DISABLE_COPY(DeferredData);
     };
-    QV4::CompiledData::CompilationUnit *compilationUnit;
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> compilationUnit;
     QVector<DeferredData *> deferredData;
 
     void deferData(int objectIndex, QV4::CompiledData::CompilationUnit *, QQmlContextData *);
@@ -259,7 +267,7 @@ public:
     bool hasExtendedData() const { return extendedData != 0; }
     QHash<int, QObject *> *attachedProperties() const;
 
-    static inline bool wasDeleted(QObject *);
+    static inline bool wasDeleted(const QObject *);
 
     static void markAsDeleted(QObject *);
     static void setQueuedForDeletion(QObject *);
@@ -275,6 +283,9 @@ public:
         return createPropertyCache(engine, object);
     }
 
+    Q_ALWAYS_INLINE static uint offsetForBit(int bit) { return static_cast<uint>(bit) / BitsPerType; }
+    Q_ALWAYS_INLINE static BindingBitsType bitFlagForBit(int bit) { return BindingBitsType(1) << (static_cast<uint>(bit) & (BitsPerType - 1)); }
+
 private:
     // For attachedProperties
     mutable QQmlDataExtended *extendedData;
@@ -286,26 +297,26 @@ private:
 
     Q_ALWAYS_INLINE bool hasBitSet(int bit) const
     {
-        if (bindingBitsSize <= bit)
+        uint offset = offsetForBit(bit);
+        if (bindingBitsArraySize <= offset)
             return false;
 
-        if (bindingBitsSize == MaxInlineBits)
-            return bindingBitsValue & (BindingBitsType(1) << bit);
-        else
-            return bindingBits[bit / MaxInlineBits] & (BindingBitsType(1) << (bit % MaxInlineBits));
+        const BindingBitsType *bits = (bindingBitsArraySize == InlineBindingArraySize) ? bindingBitsValue : bindingBits;
+        return bits[offset] & bitFlagForBit(bit);
     }
+    Q_DISABLE_COPY(QQmlData);
 };
 
-bool QQmlData::wasDeleted(QObject *object)
+bool QQmlData::wasDeleted(const QObject *object)
 {
     if (!object)
         return true;
 
-    QObjectPrivate *priv = QObjectPrivate::get(object);
+    const QObjectPrivate *priv = QObjectPrivate::get(object);
     if (!priv || priv->wasDeleted)
         return true;
 
-    QQmlData *ddata = QQmlData::get(object);
+    const QQmlData *ddata = QQmlData::get(object);
     return ddata && ddata->isQueuedForDeletion;
 }
 

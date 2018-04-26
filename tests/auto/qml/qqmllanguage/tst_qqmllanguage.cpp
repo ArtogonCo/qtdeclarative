@@ -38,6 +38,7 @@
 #include <QFont>
 #include <QQmlFileSelector>
 #include <QFileSelector>
+#include <QEasingCurve>
 
 #include <private/qqmlproperty_p.h>
 #include <private/qqmlmetatype_p.h>
@@ -268,6 +269,14 @@ private slots:
     void qmlTypeCanBeResolvedByName();
 
     void concurrentLoadQmlDir();
+
+    void accessDeletedObject();
+
+    void lowercaseTypeNames();
+
+    void thisInQmlScope();
+
+    void valueTypeGroupPropertiesInBehavior();
 
 private:
     QQmlEngine engine;
@@ -511,6 +520,7 @@ void tst_qqmllanguage::errors_data()
     QTest::newRow("invalidAlias.10") << "invalidAlias.10.qml" << "invalidAlias.10.errors.txt" << false;
     QTest::newRow("invalidAlias.11") << "invalidAlias.11.qml" << "invalidAlias.11.errors.txt" << false;
     QTest::newRow("invalidAlias.12") << "invalidAlias.12.qml" << "invalidAlias.12.errors.txt" << false;
+    QTest::newRow("invalidAlias.13") << "invalidAlias.13.qml" << "invalidAlias.13.errors.txt" << false;
 
     QTest::newRow("invalidAttachedProperty.1") << "invalidAttachedProperty.1.qml" << "invalidAttachedProperty.1.errors.txt" << false;
     QTest::newRow("invalidAttachedProperty.2") << "invalidAttachedProperty.2.qml" << "invalidAttachedProperty.2.errors.txt" << false;
@@ -1861,6 +1871,16 @@ void tst_qqmllanguage::aliasProperties()
         QVERIFY(!subObject.isNull());
 
         QVERIFY(subObject->property("success").toBool());
+    }
+
+    // Alias to sub-object with binding (QTBUG-57041)
+    {
+        // This is shold *not* crash.
+        QQmlComponent component(&engine, testFileUrl("alias.16.qml"));
+        VERIFY_ERRORS(0);
+
+        QScopedPointer<QObject> object(component.create());
+        QVERIFY(!object.isNull());
     }
 }
 
@@ -4569,6 +4589,61 @@ void tst_qqmllanguage::concurrentLoadQmlDir()
     QScopedPointer<QObject> o(component.create());
     QVERIFY(!o.isNull());
     engine.setImportPathList(defaultImportPathList);
+}
+
+// Test that deleting an object and then accessing it doesn't crash.
+// QTBUG-44153
+class ObjectCreator : public QObject
+{
+    Q_OBJECT
+public slots:
+    QObject *create() { return (new ObjectCreator); }
+    void del() { delete this; }
+};
+
+void tst_qqmllanguage::accessDeletedObject()
+{
+    QQmlEngine engine;
+
+    engine.rootContext()->setContextProperty("objectCreator", new ObjectCreator);
+    QQmlComponent component(&engine, testFileUrl("accessDeletedObject.qml"));
+    VERIFY_ERRORS(0);
+
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+}
+
+void tst_qqmllanguage::lowercaseTypeNames()
+{
+    QCOMPARE(qmlRegisterType<QObject>("Test", 1, 0, "lowerCaseTypeName"), -1);
+    QCOMPARE(qmlRegisterSingletonType<QObject>("Test", 1, 0, "lowerCaseTypeName", nullptr), -1);
+}
+
+void tst_qqmllanguage::thisInQmlScope()
+{
+    QQmlEngine engine;
+
+    QQmlComponent component(&engine, testFileUrl("thisInQmlScope.qml"));
+    QTRY_VERIFY(component.isReady());
+    VERIFY_ERRORS(0);
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+    QCOMPARE(o->property("x"), QVariant(42));
+    QCOMPARE(o->property("y"), QVariant(42));
+}
+
+void tst_qqmllanguage::valueTypeGroupPropertiesInBehavior()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("groupPropertyInPropertyValueSource.qml"));
+    VERIFY_ERRORS(0);
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+
+    QObject *animation = qmlContext(o.data())->contextProperty("animation").value<QObject*>();
+    QVERIFY(animation);
+
+    QCOMPARE(animation->property("easing").value<QEasingCurve>().type(), QEasingCurve::InOutQuad);
 }
 
 QTEST_MAIN(tst_qqmllanguage)

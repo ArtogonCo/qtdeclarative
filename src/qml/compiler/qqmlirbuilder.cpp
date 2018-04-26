@@ -1397,6 +1397,9 @@ QV4::CompiledData::Unit *QmlUnitGenerator::generate(Document &output, const QV4:
     QV4::CompiledData::Unit *qmlUnit = reinterpret_cast<QV4::CompiledData::Unit *>(data);
     qmlUnit->unitSize = totalSize;
     qmlUnit->flags |= QV4::CompiledData::Unit::IsQml;
+    // This unit's memory was allocated with malloc on the heap, so it's
+    // definitely not suitable for StaticData access.
+    qmlUnit->flags &= ~QV4::CompiledData::Unit::StaticData;
     qmlUnit->offsetToImports = unitSize;
     qmlUnit->nImports = output.imports.count();
     qmlUnit->offsetToObjects = unitSize + importSize;
@@ -1555,7 +1558,7 @@ char *QmlUnitGenerator::writeBindings(char *bindingPtr, const Object *o, Binding
 JSCodeGen::JSCodeGen(const QString &fileName, const QString &finalUrl, const QString &sourceCode,
                      QV4::IR::Module *jsModule, QQmlJS::Engine *jsEngine,
                      QQmlJS::AST::UiProgram *qmlRoot, QQmlTypeNameCache *imports,
-                     const QV4::Compiler::StringTableGenerator *stringPool)
+                     const QV4::Compiler::StringTableGenerator *stringPool, const QSet<QString> &globalNames)
     : QQmlJS::Codegen(/*strict mode*/false)
     , sourceCode(sourceCode)
     , jsEngine(jsEngine)
@@ -1567,6 +1570,7 @@ JSCodeGen::JSCodeGen(const QString &fileName, const QString &finalUrl, const QSt
     , _scopeObject(0)
     , _qmlContextTemp(-1)
     , _importedScriptsTemp(-1)
+    , m_globalNames(globalNames)
 {
     _module = jsModule;
     _module->setFileName(fileName);
@@ -2009,6 +2013,9 @@ QV4::IR::Expr *JSCodeGen::fallbackNameLookup(const QString &name, int line, int 
             return _block->MEMBER(base, _function->newString(name), pd, QV4::IR::Member::MemberOfQmlContextObject);
         }
     }
+
+    if (m_globalNames.contains(name))
+        return _block->GLOBALNAME(name, line, col, /*forceLookup =*/ true);
 
 #else
     Q_UNUSED(name)

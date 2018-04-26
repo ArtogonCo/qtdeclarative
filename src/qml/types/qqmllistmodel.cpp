@@ -255,7 +255,12 @@ QObject *ListModel::getOrCreateModelObject(QQmlListModel *model, int elementInde
 {
     ListElement *e = elements[elementIndex];
     if (e->m_objectCache == 0) {
-        e->m_objectCache = new QObject;
+        void *memory = operator new(sizeof(QObject) + sizeof(QQmlData));
+        void *ddataMemory = ((char *)memory) + sizeof(QObject);
+        e->m_objectCache = new (memory) QObject;
+        QQmlData *ddata = new (ddataMemory) QQmlData;
+        ddata->ownMemory = false;
+        QObjectPrivate::get(e->m_objectCache)->declarativeData = ddata;
         (void)new ModelNodeMetaObject(e->m_objectCache, model, elementIndex);
     }
     return e->m_objectCache;
@@ -1337,7 +1342,7 @@ void ModelObject::put(Managed *m, String *name, const Value &value)
     ModelObject *that = static_cast<ModelObject*>(m);
 
     ExecutionEngine *eng = that->engine();
-    const int elementIndex = that->d()->m_elementIndex;
+    const int elementIndex = that->d()->elementIndex();
     const QString propName = name->toQString();
     int roleIndex = that->d()->m_model->m_listModel->setExistingProperty(elementIndex, propName, value, eng);
     if (roleIndex != -1)
@@ -1364,7 +1369,7 @@ ReturnedValue ModelObject::get(const Managed *m, String *name, bool *hasProperty
                                                  QQmlPropertyCapture::OnlyOnce, false);
     }
 
-    const int elementIndex = that->d()->m_elementIndex;
+    const int elementIndex = that->d()->elementIndex();
     QVariant value = that->d()->m_model->data(elementIndex, role->index);
     return that->engine()->fromVariant(value);
 }
@@ -1382,7 +1387,7 @@ void ModelObject::advanceIterator(Managed *m, ObjectIterator *it, Value *name, u
         ScopedString roleName(scope, v4->newString(role.name));
         name->setM(roleName->d());
         *attributes = QV4::Attr_Data;
-        QVariant value = that->d()->m_model->data(that->d()->m_elementIndex, role.index);
+        QVariant value = that->d()->m_model->data(that->d()->elementIndex(), role.index);
         p->value = v4->fromVariant(value);
         return;
     }
@@ -2290,10 +2295,14 @@ QQmlV4Handle QQmlListModel::get(int index) const
             result = QV4::QObjectWrapper::wrap(scope.engine, object);
         } else {
             QObject *object = m_listModel->getOrCreateModelObject(const_cast<QQmlListModel *>(this), index);
-            result = scope.engine->memoryManager->allocObject<QV4::ModelObject>(object, const_cast<QQmlListModel *>(this), index);
-            // Keep track of the QObjectWrapper in persistent value storage
-            QV4::Value *val = scope.engine->memoryManager->m_weakValues->allocate();
-            *val = result;
+            QQmlData *ddata = QQmlData::get(object);
+            if (ddata->jsWrapper.isNullOrUndefined()) {
+                result = scope.engine->memoryManager->allocObject<QV4::ModelObject>(object, const_cast<QQmlListModel *>(this));
+                // Keep track of the QObjectWrapper in persistent value storage
+                ddata->jsWrapper.set(scope.engine, result);
+            } else {
+                result = ddata->jsWrapper.value();
+            }
         }
     }
 
