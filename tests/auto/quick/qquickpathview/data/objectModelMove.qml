@@ -1,9 +1,9 @@
 /****************************************************************************
 **
-** Copyright (C) 2017 The Qt Company Ltd.
+** Copyright (C) 2018 The Qt Company Ltd.
 ** Contact: https://www.qt.io/licensing/
 **
-** This file is part of the documentation of the Qt Toolkit.
+** This file is part of the test suite of the Qt Toolkit.
 **
 ** $QT_BEGIN_LICENSE:BSD$
 ** Commercial License Usage
@@ -48,89 +48,76 @@
 **
 ****************************************************************************/
 
-//! [0]
-QJSEngine myEngine;
-QJSValue three = myEngine.evaluate("1 + 2");
-//! [0]
+import QtQml.Models 2.2
+import QtQuick 2.9
 
+Item {
+    id: root
+    width: 400
+    height: 400
+    visible: true
 
-//! [1]
-QJSValue fun = myEngine.evaluate("(function(a, b) { return a + b; })");
-QJSValueList args;
-args << 1 << 2;
-QJSValue threeAgain = fun.call(args);
-//! [1]
+    property Item pathViewItem
 
+    function destroyView() {
+        if (pathViewItem)
+            pathViewItem.destroy()
+    }
 
-//! [2]
-QString fileName = "helloworld.qs";
-QFile scriptFile(fileName);
-if (!scriptFile.open(QIODevice::ReadOnly))
-    // handle error
-QTextStream stream(&scriptFile);
-QString contents = stream.readAll();
-scriptFile.close();
-myEngine.evaluate(contents, fileName);
-//! [2]
+    function newView() {
+        pathViewItem = pathViewComponent.createObject(root)
+    }
 
+    function move() {
+        objectModel.move(0, 1)
+    }
 
-//! [3]
-myEngine.globalObject().setProperty("myNumber", 123);
-...
-QJSValue myNumberPlusOne = myEngine.evaluate("myNumber + 1");
-//! [3]
+    Component {
+        id: pathViewComponent
 
+        PathView {
+            id: pathView
+            objectName: "PathView"
+            width: 32 * 3
+            height: 32
+            model: objectModel
 
-//! [4]
-QJSValue result = myEngine.evaluate(...);
-if (result.isError())
-    qDebug()
-            << "Uncaught exception at line"
-            << result.property("lineNumber").toInt()
-            << ":" << result.toString();
-//! [4]
+            interactive: false
+            snapMode: PathView.SnapToItem
+            movementDirection: PathView.Positive
+            highlightMoveDuration: 100
 
+            path: Path {
+                startX: 16
+                startY: 16
+                PathLine {
+                    x: 16 + (32 * 3)
+                    y: 16
+                }
+            }
+        }
+    }
 
-//! [5]
-QPushButton *button = new QPushButton;
-QJSValue scriptButton = myEngine.newQObject(button);
-myEngine.globalObject().setProperty("button", scriptButton);
+    ObjectModel {
+        id: objectModel
 
-myEngine.evaluate("button.checkable = true");
-
-qDebug() << scriptButton.property("checkable").toBool();
-scriptButton.property("show").call(); // call the show() slot
-//! [5]
-
-
-//! [6]
-QJSEngine engine;
-
-QObject *myQObject = new QObject();
-myQObject->setProperty("dynamicProperty", 3);
-
-QJSValue myScriptQObject = engine.newQObject(myQObject);
-engine.globalObject().setProperty("myObject", myScriptQObject);
-
-qDebug() << engine.evaluate("myObject.dynamicProperty").toInt();
-//! [6]
-
-
-//! [7]
-class MyObject : public QObject
-{
-    Q_OBJECT
-
-public:
-    Q_INVOKABLE MyObject() {}
-};
-//! [7]
-
-//! [8]
-QJSValue jsMetaObject = engine.newQMetaObject(&MyObject::staticMetaObject);
-engine.globalObject().setProperty("MyObject", jsMetaObject);
-//! [8]
-
-//! [9]
-engine.evaluate("var myObject = new MyObject()");
-//! [9]
+        Rectangle {
+            objectName: "red"
+            width: 32
+            height: 32
+            color: "red"
+        }
+        Rectangle {
+            objectName: "green"
+            width: 32
+            height: 32
+            color: "green"
+        }
+        Rectangle {
+            objectName: "blue"
+            width: 32
+            height: 32
+            color: "blue"
+        }
+    }
+}
